@@ -102,12 +102,48 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
         stars_info = f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + stars_info
 
     keyboard = [
-        ['100 ⭐️ - 160Р', '250 ⭐️ - 400Р'],
-        ['500 ⭐️ - 800Р', '1000 ⭐️ - 1600Р'],
-        ['2500 ⭐️ - 4000Р', '🔙 Назад']
+        ['100 ⭐️ - 160Р', '150 ⭐️ - 240Р'],
+        ['250 ⭐️ - 400Р', '500 ⭐️ - 800Р'],
+        ['1000 ⭐️ - 1600Р', '2500 ⭐️ - 4000Р'],
+        ['🔙 Назад']
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
+
+# === Проверка соглашения и кнопка оплаты ===
+async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
+    price = int(stars_count * 1.6)  # курс 1 звезда = 1.6 руб
+
+    # ссылки на оплату по пакетам
+    payment_links = {
+        100: "https://pay.cloudtips.ru/p/849a7496",
+        150: "https://pay.cloudtips.ru/p/68434d59",
+        # добавь сюда другие пакеты при необходимости:
+        # 250: "https://pay.cloudtips.ru/p/_________",
+        # 500: "https://pay.cloudtips.ru/p/_________",
+    }
+
+    if not bypass_agreement and not context.user_data.get("agreement_accepted"):
+        context.user_data["pending_order"] = {"type": "stars", "count": stars_count}
+        await show_agreement(update, context)
+        return
+
+    msg = (
+        f"🎉 Отличный выбор!\n\n"
+        f"Товар: {stars_count} Telegram Stars ⭐️\n"
+        f"Цена: {price} руб.\n\n"
+    )
+
+    # если есть ссылка для этого пакета — показать кнопку оплаты
+    if stars_count in payment_links:
+        pay_url = payment_links[stars_count]
+        msg += "Нажмите кнопку ниже, чтобы оплатить 💳"
+        pay_button = [[InlineKeyboardButton("💳 Оплатить", url=pay_url)]]
+        reply_markup = InlineKeyboardMarkup(pay_button)
+        await update.message.reply_text(msg, reply_markup=reply_markup)
+    else:
+        msg += "⚠️ Для этого пакета оплата пока не подключена."
+        await update.message.reply_text(msg)
 
 # === Покупка Premium ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -136,42 +172,6 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     reply_markup = ReplyKeyboardMarkup([['🔙 Назад']], resize_keyboard=True)
     await update.message.reply_text(support_text, reply_markup=reply_markup)
-
-# === Проверка соглашения и кнопка оплаты ===
-async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
-    price = int(stars_count * 1.6)  # новый курс
-
-    if not bypass_agreement and not context.user_data.get("agreement_accepted"):
-        context.user_data["pending_order"] = {"type": "stars", "count": stars_count}
-        await show_agreement(update, context)
-        return
-
-    msg = (
-        f"🎉 Отличный выбор!\n\n"
-        f"Товар: {stars_count} Telegram Stars ⭐️\n"
-        f"Цена: {price} руб.\n\n"
-        f"Нажмите кнопку ниже для оплаты 💳"
-    )
-
-    pay_button = [
-        [InlineKeyboardButton("💳 Оплатить", url="https://pay.cloudtips.ru/p/849a7496")]
-    ]
-    reply_markup = InlineKeyboardMarkup(pay_button)
-    await update.message.reply_text(msg, reply_markup=reply_markup)
-
-async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TYPE, product_name: str, price: int, bypass_agreement=False):
-    if not bypass_agreement and not context.user_data.get("agreement_accepted"):
-        context.user_data["pending_order"] = {"type": "premium", "name": product_name, "price": price}
-        await show_agreement(update, context)
-        return
-
-    msg = (
-        f"🎉 Отличный выбор!\n\n"
-        f"Товар: {product_name}\n"
-        f"Цена: {price} руб.\n\n"
-        f"Оплата скоро будет подключена 💫"
-    )
-    await update.message.reply_text(msg)
 
 # === Обработка сообщений ===
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,26 +206,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_gift_selection(update, context)
         return
 
-    if context.user_data.get('gift_mode') and not context.user_data.get('gift_username'):
-        if user_text.startswith('@') and len(user_text) > 1:
-            context.user_data['gift_username'] = user_text
-            await update.message.reply_text(f"✅ Подарок для {user_text}\n\nТеперь выбери товар:")
-            if context.user_data.get('product_type') == 'premium':
-                await show_premium_purchase(update, context)
-            else:
-                await show_stars_purchase(update, context)
-        else:
-            await update.message.reply_text("❌ Неверный формат. Введите @username.")
-        return
+    star_packages = {
+        '100 ⭐️ - 160Р': 100,
+        '150 ⭐️ - 240Р': 150,
+        '250 ⭐️ - 400Р': 250,
+        '500 ⭐️ - 800Р': 500,
+        '1000 ⭐️ - 1600Р': 1000,
+        '2500 ⭐️ - 4000Р': 2500
+    }
 
-    star_packages = {'100 ⭐️ - 160Р': 100, '250 ⭐️ - 400Р': 250, '500 ⭐️ - 800Р': 500, '1000 ⭐️ - 1600Р': 1000, '2500 ⭐️ - 4000Р': 2500}
     if user_text in star_packages:
         await process_stars_order(update, context, star_packages[user_text])
-        return
-
-    premium_items = {'💎 3 месяца': 1200, '🚀 6 месяцев': 1500, '👑 12 месяцев': 2500}
-    if user_text in premium_items:
-        await process_premium_order(update, context, user_text, premium_items[user_text])
         return
 
     try:
