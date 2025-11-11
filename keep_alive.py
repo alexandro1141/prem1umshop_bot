@@ -6,7 +6,7 @@ app = Flask('')
 bot = telegram.Bot(token="8392743023:AAHjApwBpmoapx7NA3KW25iGmBITUvuOnDQ")
 
 # 🔹 Твой Telegram ID (чтобы бот присылал уведомления лично тебе)
-ADMIN_ID = 123456789  # ← поменяй на свой ID (узнай в @userinfobot)
+ADMIN_ID = 1041184050  # ← поменяй на свой ID (узнай в @userinfobot)
 
 @app.route('/')
 def home():
