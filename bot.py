@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
 
@@ -85,7 +85,6 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_accepted"] = True
 
-    # После согласия бот автоматически продолжает заказ:
     if "pending_order" in context.user_data:
         order_data = context.user_data["pending_order"]
         if order_data["type"] == "stars":
@@ -103,9 +102,9 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
         stars_info = f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + stars_info
 
     keyboard = [
-        ['100 ⭐️ - 152Р', '250 ⭐️ - 380Р'],
-        ['500 ⭐️ - 760Р', '1000 ⭐️ - 1520Р'],
-        ['2500 ⭐️ - 3800Р', '🔙 Назад']
+        ['100 ⭐️ - 160Р', '250 ⭐️ - 400Р'],
+        ['500 ⭐️ - 800Р', '1000 ⭐️ - 1600Р'],
+        ['2500 ⭐️ - 4000Р', '🔙 Назад']
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
@@ -138,9 +137,9 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup([['🔙 Назад']], resize_keyboard=True)
     await update.message.reply_text(support_text, reply_markup=reply_markup)
 
-# === Проверка соглашения перед оплатой ===
+# === Проверка соглашения и кнопка оплаты ===
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
-    price = int(stars_count * 1.52)
+    price = int(stars_count * 1.6)  # новый курс
 
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
         context.user_data["pending_order"] = {"type": "stars", "count": stars_count}
@@ -151,9 +150,14 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🎉 Отличный выбор!\n\n"
         f"Товар: {stars_count} Telegram Stars ⭐️\n"
         f"Цена: {price} руб.\n\n"
-        f"Оплата скоро будет подключена!\n💫"
+        f"Нажмите кнопку ниже для оплаты 💳"
     )
-    await update.message.reply_text(msg)
+
+    pay_button = [
+        [InlineKeyboardButton("💳 Оплатить", url="https://pay.cloudtips.ru/p/849a7496")]
+    ]
+    reply_markup = InlineKeyboardMarkup(pay_button)
+    await update.message.reply_text(msg, reply_markup=reply_markup)
 
 async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TYPE, product_name: str, price: int, bypass_agreement=False):
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
@@ -165,7 +169,7 @@ async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TY
         f"🎉 Отличный выбор!\n\n"
         f"Товар: {product_name}\n"
         f"Цена: {price} руб.\n\n"
-        f"Оплата скоро будет подключена!\n💫"
+        f"Оплата скоро будет подключена 💫"
     )
     await update.message.reply_text(msg)
 
@@ -214,7 +218,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Неверный формат. Введите @username.")
         return
 
-    star_packages = {'100 ⭐️ - 152Р': 100, '250 ⭐️ - 380Р': 250, '500 ⭐️ - 760Р': 500, '1000 ⭐️ - 1520Р': 1000, '2500 ⭐️ - 3800Р': 2500}
+    star_packages = {'100 ⭐️ - 160Р': 100, '250 ⭐️ - 400Р': 250, '500 ⭐️ - 800Р': 500, '1000 ⭐️ - 1600Р': 1000, '2500 ⭐️ - 4000Р': 2500}
     if user_text in star_packages:
         await process_stars_order(update, context, star_packages[user_text])
         return
@@ -237,7 +241,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === Запуск ===
 def main():
-    keep_alive()  # запускаем веб-сервер чтобы Replit не засыпал
+    keep_alive()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex('^✅ Я согласен$'), handle_agreement_consent))
