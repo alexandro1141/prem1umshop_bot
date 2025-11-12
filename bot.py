@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
 
@@ -64,7 +64,6 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
 # === Показ соглашения ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет ссылку на соглашение и кнопку 'Я согласен'."""
     context.user_data["agreement_shown"] = True
 
     agreement_text = (
@@ -90,10 +89,10 @@ async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT
         if order_data["type"] == "stars":
             await process_stars_order(update, context, order_data["count"], bypass_agreement=True)
         elif order_data["type"] == "premium":
-            await process_premium_order(update, context, order_data["name"], order_data["price"], bypass_agreement=True)
+            await update.message.reply_text("💳 Оплата скоро будет доступна!")
         del context.user_data["pending_order"]
     else:
-        await update.message.reply_text("✅ Соглашение принято.")
+        await update.message.reply_text("✅ Соглашение принято.\n💳 Оплата скоро будет доступна!")
 
 # === Покупка Stars ===
 async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,15 +113,6 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
     price = int(stars_count * 1.6)  # курс 1 звезда = 1.6 руб
 
-    # ссылки на оплату по пакетам
-    payment_links = {
-        100: "https://pay.cloudtips.ru/p/849a7496",
-        150: "https://pay.cloudtips.ru/p/68434d59",
-        # добавь сюда другие пакеты при необходимости:
-        # 250: "https://pay.cloudtips.ru/p/_________",
-        # 500: "https://pay.cloudtips.ru/p/_________",
-    }
-
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
         context.user_data["pending_order"] = {"type": "stars", "count": stars_count}
         await show_agreement(update, context)
@@ -132,18 +122,10 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🎉 Отличный выбор!\n\n"
         f"Товар: {stars_count} Telegram Stars ⭐️\n"
         f"Цена: {price} руб.\n\n"
+        f"💳 Оплата скоро будет доступна!"
     )
 
-    # если есть ссылка для этого пакета — показать кнопку оплаты
-    if stars_count in payment_links:
-        pay_url = payment_links[stars_count]
-        msg += "Нажмите кнопку ниже, чтобы оплатить 💳"
-        pay_button = [[InlineKeyboardButton("💳 Оплатить", url=pay_url)]]
-        reply_markup = InlineKeyboardMarkup(pay_button)
-        await update.message.reply_text(msg, reply_markup=reply_markup)
-    else:
-        msg += "⚠️ Для этого пакета оплата пока не подключена."
-        await update.message.reply_text(msg)
+    await update.message.reply_text(msg)
 
 # === Покупка Premium ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -233,6 +215,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === Запуск ===
 def main():
     keep_alive()
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex('^✅ Я согласен$'), handle_agreement_consent))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("🤖 PREM1UMSHOP бот запущен...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex('^✅ Я согласен$'), handle_agreement_consent))
