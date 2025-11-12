@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
 
@@ -11,6 +11,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+
+# === Каталог Premium (глобально, чтобы использовать в нескольких местах) ===
+PREMIUM_ITEMS = {
+    "💎 3 месяца": {"name": "💎 3 месяца", "price": 1200},
+    "🚀 6 месяцев": {"name": "🚀 6 месяцев", "price": 1500},
+    "👑 12 месяцев": {"name": "👑 12 месяцев", "price": 2500},
+}
 
 # === Команда /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,7 +96,7 @@ async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT
         if order_data["type"] == "stars":
             await process_stars_order(update, context, order_data["count"], bypass_agreement=True)
         elif order_data["type"] == "premium":
-            await update.message.reply_text("💳 Оплата скоро будет доступна!")
+            await process_premium_order(update, context, order_data["name"], order_data["price"], bypass_agreement=True)
         del context.user_data["pending_order"]
     else:
         await update.message.reply_text("✅ Соглашение принято.\n💳 Оплата скоро будет доступна!")
@@ -109,7 +116,7 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
 
-# === Проверка соглашения и кнопка оплаты ===
+# === Проверка соглашения (Stars) ===
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
     price = int(stars_count * 1.6)  # курс 1 звезда = 1.6 руб
 
@@ -124,18 +131,12 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"Цена: {price} руб.\n\n"
         f"💳 Оплата скоро будет доступна!"
     )
-
     await update.message.reply_text(msg)
 
-# === Покупка Premium ===
+# === Покупка Premium (каталог и выбор) ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catalog_text = "👑 Telegram Premium:\n\n"
-    premium_items = {
-        "premium_3m": {"name": "💎 3 месяца", "price": 1200},
-        "premium_6m": {"name": "🚀 6 месяцев", "price": 1500},
-        "premium_12m": {"name": "👑 12 месяцев", "price": 2500},
-    }
-    for item in premium_items.values():
+    for item in PREMIUM_ITEMS.values():
         catalog_text += f"• {item['name']}\n💰 Цена: {item['price']} руб.\n\n"
 
     if context.user_data.get('gift_mode') and context.user_data.get('gift_username'):
@@ -144,6 +145,22 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [['💎 3 месяца', '🚀 6 месяцев'], ['👑 12 месяцев', '🔙 Назад']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
+
+# === Проверка соглашения (Premium) ===
+async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TYPE, name: str, price: int, bypass_agreement=False):
+    if not bypass_agreement and not context.user_data.get("agreement_accepted"):
+        # Запоминаем заказ и показываем соглашение
+        context.user_data["pending_order"] = {"type": "premium", "name": name, "price": price}
+        await show_agreement(update, context)
+        return
+
+    msg = (
+        "🎉 Отличный выбор!\n\n"
+        f"Товар: {name}\n"
+        f"Цена: {price} руб.\n\n"
+        "💳 Оплата скоро будет доступна!"
+    )
+    await update.message.reply_text(msg)
 
 # === Поддержка ===
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -188,6 +205,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_gift_selection(update, context)
         return
 
+    # Пакеты звёзд
     star_packages = {
         '100 ⭐️ - 160Р': 100,
         '150 ⭐️ - 240Р': 150,
@@ -196,11 +214,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '1000 ⭐️ - 1600Р': 1000,
         '2500 ⭐️ - 4000Р': 2500
     }
-
     if user_text in star_packages:
         await process_stars_order(update, context, star_packages[user_text])
         return
 
+    # Пакеты Premium
+    if user_text in PREMIUM_ITEMS:
+        item = PREMIUM_ITEMS[user_text]
+        await process_premium_order(update, context, item["name"], item["price"])
+        return
+
+    # Пользователь ввёл число — кастомное количество Stars
     try:
         stars_count = int(user_text)
         if stars_count < 50:
@@ -215,16 +239,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === Запуск ===
 def main():
     keep_alive()
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex('^✅ Я согласен$'), handle_agreement_consent))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 PREM1UMSHOP бот запущен...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
-
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex('^✅ Я согласен$'), handle_agreement_consent))
