@@ -24,7 +24,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data.clear()
 
-    # ДОБАВЛЕНЫ КНОПКИ "ℹ️ О сервисе" и "📄 Документы"
+    # Главное меню с новыми кнопками
     keyboard = [
         ['⭐️ Telegram Stars', '👑 Telegram Premium'],
         ['ℹ️ О сервисе', '📄 Документы'],
@@ -174,7 +174,7 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup([['🔙 Назад']], resize_keyboard=True)
     await update.message.reply_text(support_text, reply_markup=reply_markup)
 
-# === НОВОЕ: Раздел 'О сервисе' ===
+# === О сервисе ===
 async def show_service_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
@@ -186,11 +186,12 @@ async def show_service_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📍 <b>Продавец:</b>\n"
         "Физическое лицо — самозанятый РФ (НПД)\n"
         "ФИО: Алекс Алексанян Гайкович\n"
-        "ИНН: <b><<ВПИШИ_ИНН>></b>\n"
-        "Город: <b><<укажи город>></b>\n\n"
+        "ИНН: <b>502993268720</b>\n"
+        "Город: <b>Мытищи</b>\n\n"
         "💳 Оплата обрабатывается через платёжный сервис ЮKassa.\n"
         "Данные банковской карты передаются по защищённым каналам.\n\n"
-        "По всем вопросам: @PREM1UMSHOP"
+        "По всем вопросам: @PREM1UMSHOP\n"
+        "Email: prem1umshoptelegram@mail.ru"
     )
     reply_markup = ReplyKeyboardMarkup([
         ['⭐️ Telegram Stars', '👑 Telegram Premium'],
@@ -199,7 +200,7 @@ async def show_service_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ], resize_keyboard=True)
     await update.message.reply_html(text, reply_markup=reply_markup)
 
-# === НОВОЕ: Раздел 'Документы' ===
+# === Документы ===
 async def show_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📄 <b>Документы сервиса PREM1UMSHOP</b>\n\n"
@@ -217,12 +218,12 @@ async def show_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_html(text, reply_markup=reply_markup)
 
-# === НОВОЕ: Публичная оферта ===
+# === Публичная оферта ===
 async def show_offer_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📘 <b>Публичная оферта</b>\n\n"
         "Настоящий документ является публичной офертой физического лица\n"
-        "Алекса Алексаняна Гайковича (ИНН: <<ВПИШИ_ИНН>>, статус — самозанятый РФ),\n"
+        "Алекса Алексаняна Гайковича (ИНН: 502993268720, статус — самозанятый РФ),\n"
         "далее — «Продавец», заключить договор купли-продажи цифровых товаров\n"
         "с любым лицом, осуществившим оплату через Telegram-бот PREM1UMSHOP (@prem1umshop_star_bot).\n\n"
         "<b>1. Предмет договора</b>\n"
@@ -242,11 +243,11 @@ async def show_offer_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Условия возврата денежных средств определяются «Политикой возврата денежных средств».\n\n"
         "<b>6. Контакты</b>\n"
         "Поддержка: @PREM1UMSHOP\n"
-        "Email: <<ВПИШИ_EMAIL>>"
+        "Email: prem1umshoptelegram@mail.ru"
     )
     await update.message.reply_html(text)
 
-# === НОВОЕ: Политика возврата ===
+# === Политика возврата ===
 async def show_refund_policy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📗 <b>Политика возврата денежных средств</b>\n\n"
@@ -264,7 +265,7 @@ async def show_refund_policy(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     await update.message.reply_html(text)
 
-# === НОВОЕ: Политика конфиденциальности ===
+# === Политика конфиденциальности ===
 async def show_privacy_policy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🔐 <b>Политика конфиденциальности</b>\n\n"
@@ -284,7 +285,6 @@ async def show_privacy_policy(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
 
-    # НОВЫЕ ПУНКТЫ МЕНЮ
     if user_text == '⭐️ Telegram Stars':
         await show_stars(update, context)
         return
