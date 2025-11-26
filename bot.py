@@ -19,11 +19,11 @@ from telegram.ext import (
 from keep_alive import keep_alive
 
 # === Токен бота ===
-TOKEN = "7503780482:AAH_fOL44cA3WNt2eu1-znNBSkrplNDTFlc"
+TOKEN = "7503780482:AAH_fOL44cA3WNt2eul-znNBSkrplNDTFlc"
 
 # === ЮKassa ===
 YOOKASSA_SHOP_ID = "1215754"
-YOOKASSA_SECRET_KEY = "test_HPFY_sC9xXgl0IhQnj8b3wf_LkNCFt-f2kKnn-u2ffo"
+YOOKASSA_SECRET_KEY = "test_Qzip6Jh2VeVbMXzcUV8ni893lzSOoRy7CpXo1HCdhs"
 YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
 
 # === Логирование ===
@@ -33,7 +33,7 @@ logging.basicConfig(
 )
 
 
-# === Каталог Premium (глобально) ===
+# === Каталог Premium ===
 PREMIUM_ITEMS = {
     "💎 3 месяца": {"name": "💎 3 месяца", "price": 1200},
     "🚀 6 месяцев": {"name": "🚀 6 месяцев", "price": 1500},
@@ -41,11 +41,8 @@ PREMIUM_ITEMS = {
 }
 
 
-# === Функция создания платежа в ЮKassa ===
+# === Создание платежа в ЮKassa ===
 def create_payment(amount_rub: int, description: str, return_url: str) -> str | None:
-    """
-    Создаёт платёж в ЮKassa и возвращает URL для оплаты.
-    """
     headers = {
         "Idempotence-Key": str(uuid.uuid4()),
         "Content-Type": "application/json",
@@ -84,23 +81,22 @@ def create_payment(amount_rub: int, description: str, return_url: str) -> str | 
         confirmation = data.get("confirmation", {})
         if confirmation.get("type") == "redirect":
             return confirmation.get("confirmation_url")
-        else:
-            logging.error("Unexpected confirmation type: %s", confirmation)
-            return None
+        logging.error("Unexpected confirmation type: %s", confirmation)
+        return None
 
     except Exception as e:
         logging.exception("YooKassa create_payment exception: %s", e)
         return None
 
 
-# === Команда /start ===
+# === /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data.clear()
 
     keyboard = [
         ["⭐️ Telegram Stars", "👑 Telegram Premium"],
-        ["💬 Поддержка"],
+        ["💬 Поддержка", "ℹ О сервисе"],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -112,7 +108,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# === Telegram Stars ===
+# === О сервисе и документы ===
+async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
+        "PREM1UMSHOP (@prem1umshop_star_bot) — сервис по продаже Telegram Stars "
+        "и Telegram Premium.\n\n"
+        "<b>Документы сервиса:</b>\n"
+        "• Политика возврата денежных средств\n"
+        "• Публичная оферта\n"
+        "• Политика конфиденциальности\n\n"
+        "Полные тексты документов доступны по ссылке:\n"
+        "🔗 <a href='https://alexandro1141.github.io/policy-page/policy.html'>"
+        "Открыть документы сервиса</a>\n\n"
+        "<b>Реквизиты продавца:</b>\n"
+        "Физическое лицо: Алекс Алексанян Гайкович\n"
+        "ИНН: 502993268720\n"
+        "Город: Мытищи\n"
+        "Email: prem1umshoptelegram@mail.ru\n\n"
+        "<b>Поддержка:</b> @PREM1UMSHOP"
+    )
+
+    reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
+    await update.message.reply_html(text, reply_markup=reply_markup)
+
+
+# === Stars ===
 async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "stars"
@@ -123,7 +144,7 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
 
 
-# === Telegram Premium ===
+# === Premium ===
 async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "premium"
@@ -134,7 +155,7 @@ async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(premium_info, reply_markup=reply_markup)
 
 
-# === Подарок другу ===
+# === Подарок другу: запрос юзернейма ===
 async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["gift_mode"] = True
     gift_info = (
@@ -147,7 +168,7 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_html(gift_info, reply_markup=reply_markup)
 
 
-# === Показ соглашения ===
+# === Соглашение ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_shown"] = True
 
@@ -158,7 +179,7 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Политика возврата\n"
         "• Политика конфиденциальности\n\n"
         "🔗 <a href='https://alexandro1141.github.io/policy-page/policy.html'>"
-        "Открыть соглашение</a>\n\n"
+        "Открыть соглашение и документы</a>\n\n"
         "Если вы согласны со всеми условиями, нажмите <b>«✅ Я согласен»</b> для продолжения."
     )
 
@@ -175,10 +196,7 @@ async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT
         order_data = context.user_data["pending_order"]
         if order_data["type"] == "stars":
             await process_stars_order(
-                update,
-                context,
-                order_data["count"],
-                bypass_agreement=True,
+                update, context, order_data["count"], bypass_agreement=True
             )
         elif order_data["type"] == "premium":
             await process_premium_order(
@@ -195,7 +213,7 @@ async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT
         )
 
 
-# === Покупка Stars — выбор пакета ===
+# === Выбор пакета Stars ===
 async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stars_info = (
         "🎉 Для покупки звёзд выбери пакет или отправь своё количество "
@@ -216,14 +234,14 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
 
 
-# === Stars: создание платежа и красивые кнопки ===
+# === Создание платежа Stars ===
 async def process_stars_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     stars_count: int,
     bypass_agreement: bool = False,
 ):
-    price = int(stars_count * 1.6)  # курс 1 звезда = 1.6 руб
+    price = int(stars_count * 1.6)
 
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
         context.user_data["pending_order"] = {"type": "stars", "count": stars_count}
@@ -234,7 +252,6 @@ async def process_stars_order(
     return_url = "https://t.me/prem1umshop_star_bot"
 
     payment_url = create_payment(price, description, return_url)
-
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
@@ -272,7 +289,7 @@ async def process_stars_order(
     }
 
 
-# === Покупка Premium — выбор тарифа ===
+# === Выбор тарифа Premium ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catalog_text = "👑 Telegram Premium:\n\n"
     for item in PREMIUM_ITEMS.values():
@@ -288,7 +305,7 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
 
 
-# === Premium: создание платежа и красивые кнопки ===
+# === Создание платежа Premium ===
 async def process_premium_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -309,7 +326,6 @@ async def process_premium_order(
     return_url = "https://t.me/prem1umshop_star_bot"
 
     payment_url = create_payment(price, description, return_url)
-
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
@@ -372,6 +388,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_text == "💬 Поддержка":
         await show_support(update, context)
         return
+    elif user_text == "ℹ О сервисе":
+        await show_about(update, context)
+        return
     elif user_text == "🔙 Назад":
         await start(update, context)
         return
@@ -394,9 +413,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Выбор покупки себе / другу
+    # Ввод юзернейма для подарка
+    if context.user_data.get("gift_mode") and not context.user_data.get(
+        "gift_username"
+    ):
+        username = user_text.strip()
+        if not username.startswith("@"):
+            username = "@" + username
+
+        context.user_data["gift_username"] = username
+
+        # Определяем, что дарим — Stars или Premium
+        if context.user_data.get("product_type") == "premium" or context.user_data.get(
+            "category"
+        ) == "premium":
+            await show_premium_purchase(update, context)
+        else:
+            await show_stars_purchase(update, context)
+        return
+
+    # Выбор «купить себе / подарить другу»
     if user_text == "🎁 Купить себе":
         context.user_data["gift_mode"] = False
+        context.user_data["gift_username"] = None
         if context.user_data.get("category") == "premium":
             await show_premium_purchase(update, context)
         else:
