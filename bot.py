@@ -23,7 +23,7 @@ TOKEN = "7503780482:AAH_fOL44cA3WNt2eu1-znNBSkrplNDTFlc"
 
 # === ЮKassa ===
 YOOKASSA_SHOP_ID = "1215754"
-YOOKASSA_SECRET_KEY = "test_Qzip6Jh2VeVbMXzcUV8ni893lzSOoRy7CpXo1HCdhs"
+YOOKASSA_SECRET_KEY = "test_HPFY_sC9xXgl0IhQnj8b3wf_LkNCFt-f2kKnn-u2ffo"
 YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
 
 # === Логирование ===
