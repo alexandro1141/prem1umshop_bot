@@ -1,10 +1,18 @@
 import logging
+import uuid
+import requests
+
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
 
 # === Токен бота ===
 TOKEN = "8392743023:AAHjApwBpmoapx7NA3KW25iGmBITUvuOnDQ"
+
+# === Данные ЮKassa (ТЕСТОВЫЙ режим) ===
+YOOKASSA_SHOP_ID = "1115508896"
+YOOKASSA_SECRET_KEY = "test_gDWtGRLQJ8kDWwo4Zy3eJ8L2w3ysuccHcPqpPDOyorxw"
+YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
 
 # === Логирование ===
 logging.basicConfig(
@@ -19,12 +27,54 @@ PREMIUM_ITEMS = {
     "👑 12 месяцев": {"name": "👑 12 месяцев", "price": 2500},
 }
 
+
+# === Вспомогательная функция: создать платёж в ЮKassa ===
+def create_payment(amount_rub: int, description: str, return_url: str = "https://t.me/prem1umshop_star_bot"):
+    """
+    Создаём платёж в ЮKassa и возвращаем JSON-ответ.
+    amount_rub — сумма в рублях (int).
+    """
+    headers = {
+        "Idempotence-Key": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "amount": {
+            "value": f"{amount_rub:.2f}",
+            "currency": "RUB"
+        },
+        "capture": True,
+        "confirmation": {
+            "type": "redirect",
+            "return_url": return_url
+        },
+        "description": description
+    }
+
+    try:
+        resp = requests.post(
+            YOOKASSA_API_URL,
+            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
+            json=payload,
+            headers=headers,
+            timeout=15
+        )
+        data = resp.json()
+        if resp.status_code not in (200, 201):
+            logging.error("YooKassa error %s: %s", resp.status_code, data)
+            return None
+        return data
+    except Exception as e:
+        logging.exception("YooKassa request failed: %s", e)
+        return None
+
+
 # === Команда /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data.clear()
 
-    # Главное меню с новыми кнопками
     keyboard = [
         ['⭐️ Telegram Stars', '👑 Telegram Premium'],
         ['ℹ️ О сервисе', '📄 Документы'],
@@ -118,7 +168,7 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
 
-# === Проверка соглашения (Stars) ===
+# === Проверка соглашения (Stars) + создание платежа ===
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, stars_count: int, bypass_agreement=False):
     price = int(stars_count * 1.6)  # курс 1 звезда = 1.6 руб
 
@@ -127,13 +177,25 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         await show_agreement(update, context)
         return
 
+    description = f"{stars_count} Telegram Stars для пользователя {update.effective_user.id}"
+    payment = create_payment(price, description)
+
+    if not payment or "confirmation" not in payment:
+        await update.message.reply_text(
+            "⚠ Сейчас оплата временно недоступна. Попробуйте позже или напишите в поддержку: @PREM1UMSHOP"
+        )
+        return
+
+    pay_url = payment["confirmation"]["confirmation_url"]
+
     msg = (
         f"🎉 Отличный выбор!\n\n"
         f"Товар: {stars_count} Telegram Stars ⭐️\n"
         f"Цена: {price} руб.\n\n"
-        f"💳 Оплата скоро будет доступна!"
+        f"🔗 <b>Ссылка на оплату (ЮKassa):</b>\n{pay_url}\n\n"
+        "После успешной оплаты мы обработаем ваш заказ в ближайшее время."
     )
-    await update.message.reply_text(msg)
+    await update.message.reply_html(msg)
 
 # === Покупка Premium (каталог и выбор) ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,21 +210,32 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
 
-# === Проверка соглашения (Premium) ===
+# === Проверка соглашения (Premium) + создание платежа ===
 async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TYPE, name: str, price: int, bypass_agreement=False):
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
-        # Запоминаем заказ и показываем соглашение
         context.user_data["pending_order"] = {"type": "premium", "name": name, "price": price}
         await show_agreement(update, context)
         return
+
+    description = f"{name} Telegram Premium для пользователя {update.effective_user.id}"
+    payment = create_payment(price, description)
+
+    if not payment or "confirmation" not in payment:
+        await update.message.reply_text(
+            "⚠ Сейчас оплата временно недоступна. Попробуйте позже или напишите в поддержку: @PREM1UMSHOP"
+        )
+        return
+
+    pay_url = payment["confirmation"]["confirmation_url"]
 
     msg = (
         "🎉 Отличный выбор!\n\n"
         f"Товар: {name}\n"
         f"Цена: {price} руб.\n\n"
-        "💳 Оплата скоро будет доступна!"
+        f"🔗 <b>Ссылка на оплату (ЮKassa):</b>\n{pay_url}\n\n"
+        "После успешной оплаты мы обработаем ваш заказ в ближайшее время."
     )
-    await update.message.reply_text(msg)
+    await update.message.reply_html(msg)
 
 # === Поддержка ===
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -328,25 +401,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['product_type'] = 'stars'
         await handle_gift_selection(update, context)
         return
-            # ---- ВВОД ЮЗЕРНЕЙМА ДЛЯ ПОДАРКА ----
+
+    # Ввод @username для подарка
     if context.user_data.get('gift_mode') and not context.user_data.get('gift_username'):
         username = user_text.strip()
 
-        # Простая проверка формата ника
         if not username.startswith('@') or ' ' in username:
             await update.message.reply_text("❌ Введите ник в формате @username, без пробелов.")
             return
 
-        # Сохраняем ник получателя
         context.user_data['gift_username'] = username
 
-        # В зависимости от выбранной категории показываем нужное меню покупки
         if context.user_data.get('product_type') == 'premium':
             await show_premium_purchase(update, context)
         else:
             await show_stars_purchase(update, context)
         return
-
 
     # Пакеты звёзд
     star_packages = {
