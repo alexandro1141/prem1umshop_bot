@@ -10,8 +10,8 @@ from keep_alive import keep_alive
 TOKEN = "8392743023:AAHjApwBpmoapx7NA3KW25iGmBITUvuOnDQ"
 
 # === Данные ЮKassa (ТЕСТОВЫЙ режим) ===
-YOOKASSA_SHOP_ID = "1115508896"
-YOOKASSA_SECRET_KEY = "test_gDWtGRLQJ8kDWwo4Zy3eJ8L2w3ysuccHcPqpPDOyorxw"
+YOOKASSA_SHOP_ID = "1215754"
+YOOKASSA_SECRET_KEY = "test_Qzip6Jh2VeVbMXzcUV8ni893IzSOoRy7CpXo1HCdhs"
 YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
 
 # === Логирование ===
