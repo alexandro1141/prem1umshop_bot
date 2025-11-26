@@ -19,7 +19,7 @@ from telegram.ext import (
 from keep_alive import keep_alive
 
 # === Токен бота ===
-TOKEN = "7503780482:AAH_fOL44cA3WNt2eul-znNBSkrplNDTFlc"
+TOKEN = "7503780482:AAH_fOL44cA3WNt2eu1-znNBSkrplNDTFlc"
 
 # === ЮKassa ===
 YOOKASSA_SHOP_ID = "1215754"
