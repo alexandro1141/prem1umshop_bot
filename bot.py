@@ -328,6 +328,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['product_type'] = 'stars'
         await handle_gift_selection(update, context)
         return
+            # ---- ВВОД ЮЗЕРНЕЙМА ДЛЯ ПОДАРКА ----
+    if context.user_data.get('gift_mode') and not context.user_data.get('gift_username'):
+        username = user_text.strip()
+
+        # Простая проверка формата ника
+        if not username.startswith('@') or ' ' in username:
+            await update.message.reply_text("❌ Введите ник в формате @username, без пробелов.")
+            return
+
+        # Сохраняем ник получателя
+        context.user_data['gift_username'] = username
+
+        # В зависимости от выбранной категории показываем нужное меню покупки
+        if context.user_data.get('product_type') == 'premium':
+            await show_premium_purchase(update, context)
+        else:
+            await show_stars_purchase(update, context)
+        return
+
 
     # Пакеты звёзд
     star_packages = {
