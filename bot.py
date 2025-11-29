@@ -1,6 +1,9 @@
-import logging
 import uuid
 import requests
+import logging
+import json
+import hmac
+import hashlib
 
 from telegram import (
     Update,
@@ -21,17 +24,16 @@ from keep_alive import keep_alive
 # === Токен бота ===
 TOKEN = "8496640654:AAGIfAbZivdDPH1mbNSlENWHyXfDIgpJKaM"
 
-# === ЮKassa ===
-YOOKASSA_SHOP_ID = "1215754"
-YOOKASSA_SECRET_KEY = "test_HPFY_sC9xXgl0IhQnj8b3wf_LkNCFt-f2kKnn-u2ffo"
-YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
+# === LAVA (Business) ===
+LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"  # ID проекта (shopId)
+LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"  # Секретный ключ
+LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
 
 # === Логирование ===
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-
 
 # === Каталог Premium ===
 PREMIUM_ITEMS = {
@@ -41,51 +43,78 @@ PREMIUM_ITEMS = {
 }
 
 
-# === Создание платежа в ЮKassa ===
-def create_payment(amount_rub: int, description: str, return_url: str) -> str | None:
-    headers = {
-        "Idempotence-Key": str(uuid.uuid4()),
-        "Content-Type": "application/json",
+# === Создание инвойса в LAVA ===
+def create_lava_invoice(amount_rub: int, description: str, return_url: str) -> str | None:
+    """
+    Создаём счёт в LAVA и возвращаем ссылку на оплату.
+    Документация:
+    POST https://api.lava.ru/business/invoice/create
+    Поля: sum, orderId, shopId, successUrl, failUrl, comment, ...
+    Подпись: HMAC-SHA256(json_body, secret_key) в заголовке Signature
+    """
+
+    # Генерируем уникальный orderId
+    order_id = str(uuid.uuid4())
+
+    # Тело запроса
+    payload = {
+        "sum": float(f"{amount_rub:.2f}"),  # LAVA ждёт float
+        "orderId": order_id,
+        "shopId": LAVA_SHOP_ID,
+        "successUrl": return_url,
+        "failUrl": return_url,
+        "comment": description,
+        # "hookUrl": "...",  # если будешь делать вебхуки — сюда URL твоего обработчика
     }
 
-    payload = {
-        "amount": {
-            "value": f"{amount_rub:.2f}",
-            "currency": "RUB",
-        },
-        "capture": True,
-        "confirmation": {
-            "type": "redirect",
-            "return_url": return_url,
-        },
-        "description": description,
+    # Сериализация JSON строго в том виде, который подписываем
+    json_body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+    # Подпись HMAC-SHA256(JSON, secret_key)
+    signature = hmac.new(
+        LAVA_SECRET_KEY.encode("utf-8"),
+        msg=json_body.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Signature": signature,
     }
 
     try:
         resp = requests.post(
-            YOOKASSA_API_URL,
-            json=payload,
-            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
+            LAVA_INVOICE_URL,
+            data=json_body.encode("utf-8"),  # data-raw JSON
             headers=headers,
             timeout=15,
         )
-        if resp.status_code not in (200, 201):
-            logging.error(
-                "YooKassa error %s: %s",
-                resp.status_code,
-                resp.text,
-            )
+
+        if resp.status_code != 200:
+            logging.error("LAVA error %s: %s", resp.status_code, resp.text)
             return None
 
         data = resp.json()
-        confirmation = data.get("confirmation", {})
-        if confirmation.get("type") == "redirect":
-            return confirmation.get("confirmation_url")
-        logging.error("Unexpected confirmation type: %s", confirmation)
-        return None
+        # Ожидаем, что реальный URL счета лежит в data / invoice и т.п.
+        invoice_data = data.get("data") or data.get("invoice") or data
+
+        pay_url = None
+        if isinstance(invoice_data, dict):
+            # Пробуем несколько распространённых ключей
+            for key in ("url", "URL", "payUrl", "payment_url", "paymentUrl"):
+                if key in invoice_data and invoice_data[key]:
+                    pay_url = invoice_data[key]
+                    break
+
+        if not pay_url:
+            logging.error("Не удалось найти URL оплаты в ответе LAVA: %s", data)
+            return None
+
+        return pay_url
 
     except Exception as e:
-        logging.exception("YooKassa create_payment exception: %s", e)
+        logging.exception("LAVA create_invoice exception: %s", e)
         return None
 
 
@@ -234,7 +263,7 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(stars_info, reply_markup=reply_markup)
 
 
-# === Создание платежа Stars ===
+# === Создание платежа Stars через LAVA ===
 async def process_stars_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -251,7 +280,7 @@ async def process_stars_order(
     description = f"{stars_count} Telegram Stars для {update.effective_user.id}"
     return_url = "https://t.me/prem1umshop_star_bot"
 
-    payment_url = create_payment(price, description, return_url)
+    payment_url = create_lava_invoice(price, description, return_url)
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
@@ -305,7 +334,7 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
 
 
-# === Создание платежа Premium ===
+# === Создание платежа Premium через LAVA ===
 async def process_premium_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -325,7 +354,7 @@ async def process_premium_order(
     description = f"{name} Telegram Premium для {update.effective_user.id}"
     return_url = "https://t.me/prem1umshop_star_bot"
 
-    payment_url = create_payment(price, description, return_url)
+    payment_url = create_lava_invoice(price, description, return_url)
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
