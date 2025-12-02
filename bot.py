@@ -141,7 +141,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
-        "PREM1UMSHOP (@prem1umshop_star_bot) — сервис по продаже Telegram Stars "
+        "PREM1UMSHOP (@prem1umshopbot) — сервис по продаже Telegram Stars "
         "и Telegram Premium.\n\n"
         "<b>Документы сервиса:</b>\n"
         "• Политика возврата денежных средств\n"
