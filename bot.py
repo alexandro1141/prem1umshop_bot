@@ -167,14 +167,15 @@ def send_admin_notification(text: str):
 def lava_webhook():
     """
     Вебхук от LAVA.
-    Сейчас:
-      • принимаем любой POST (is_success=True),
-      • шлём админу данные заказа + сырой JSON,
-      • по логам потом можно будет настроить строгую проверку статуса и подписи.
+    Отправляем уведомление админу ТОЛЬКО при успешной оплате:
+      - статус в success/done/paid/completed/succeeded
+      - ИЛИ есть поле времени оплаты pay_time.
+    На создание счёта и прочие статусы уведомление не шлём.
     """
     raw_body = request.data or b""
     signature = request.headers.get("Signature")
 
+    # Пока только логируем подпись и тело
     verify_lava_signature(raw_body, signature)
 
     try:
@@ -194,9 +195,33 @@ def lava_webhook():
         or ""
     ).lower()
 
-    # ПОКА: считаем любой webhook условно успешным
-    is_success = True
+    pay_time = str(
+        data.get("pay_time")
+        or data.get("payTime")
+        or ""
+    ).strip()
 
+    # ---- определяем, успешная ли оплата ----
+    success_statuses = {"success", "done", "paid", "completed", "succeeded"}
+
+    is_success = False
+    if status in success_statuses:
+        is_success = True
+    elif pay_time:
+        # если в JSON есть время оплаты — считаем платёж успешным
+        is_success = True
+
+    if not is_success:
+        # Просто логируем и ничего не шлём
+        logging.info(
+            "Webhook неуспешного/ожидающего платежа: orderId=%s, status=%s, pay_time=%s",
+            order_id,
+            status,
+            pay_time,
+        )
+        return {"ok": True}
+
+    # ---- формируем уведомление только для успешного платежа ----
     if not order_id:
         logging.warning("Webhook без orderId: %s", data)
         order = None
@@ -204,9 +229,10 @@ def lava_webhook():
         order = ORDERS.get(order_id)
 
     base_info = (
-        "💸 <b>Webhook от LAVA</b>\n\n"
+        "💸 <b>УСПЕШНАЯ ОПЛАТА через LAVA</b>\n\n"
         f"🧾 <b>OrderId:</b> {order_id or 'нет'}\n"
-        f"📊 <b>Status (сырой):</b> {status or 'не передан'}\n\n"
+        f"📊 <b>Status:</b> {status or 'не передан'}\n"
+        f"⏰ <b>Время оплаты:</b> {pay_time or 'не указано'}\n\n"
     )
 
     if order:
@@ -244,10 +270,12 @@ def lava_webhook():
     pretty_json = json.dumps(data, ensure_ascii=False, indent=2)
     text += "\n<pre>" + pretty_json + "</pre>"
 
-    if is_success:
-        send_admin_notification(text)
+    send_admin_notification(text)
 
-    # Пока не удаляем ORDERS[order_id], чтобы можно было отлаживать повторы
+    # Можно почистить ORDERS, если не нужен повторный вебхук
+    # if order_id in ORDERS:
+    #     ORDERS.pop(order_id, None)
+
     return {"ok": True}
 
 
