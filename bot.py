@@ -138,36 +138,43 @@ def verify_lava_signature(raw_body: bytes, signature: str | None) -> bool:
     return True
 
 
-async def _notify_admin(text: str):
+def send_admin_notification(text: str):
     """
-    Асинхронная отправка сообщения админу.
-    Вызывается из Flask-потока через tg_app.create_task(...)
+    Синхронно отправляем сообщение админу через HTTP API Telegram.
+    Это можно безопасно вызывать из Flask-потока (без asyncio).
     """
     try:
-        await tg_app.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=text,
-            parse_mode="HTML",
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": ADMIN_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+            },
+            timeout=10,
         )
+        if resp.status_code != 200:
+            logging.error(
+                "Ошибка отправки сообщения админу: %s %s",
+                resp.status_code,
+                resp.text,
+            )
     except Exception:
-        logging.exception("Не удалось отправить сообщение админу")
+        logging.exception("Исключение при отправке сообщения админу")
 
 
 @flask_app.route("/lava-webhook", methods=["POST"])
 def lava_webhook():
     """
     Вебхук от LAVA.
-    Сейчас мы:
-      • принимаем любой POST как успешный (is_success=True),
+    Сейчас:
+      • принимаем любой POST (is_success=True),
       • шлём админу данные заказа + сырой JSON,
-      • по логам потом можно будет настроить строгую проверку статуса.
+      • по логам потом можно будет настроить строгую проверку статуса и подписи.
     """
-    global tg_app
-
     raw_body = request.data or b""
     signature = request.headers.get("Signature")
 
-    # Пока только логируем
     verify_lava_signature(raw_body, signature)
 
     try:
@@ -187,9 +194,7 @@ def lava_webhook():
         or ""
     ).lower()
 
-    # ПОКА: считаем любой webhook условно успешным, чтобы ты видел уведомления.
-    # Позже можно будет заменить на:
-    # is_success = status in ("done", "success", "paid", "completed")
+    # ПОКА: считаем любой webhook условно успешным
     is_success = True
 
     if not order_id:
@@ -236,15 +241,11 @@ def lava_webhook():
     else:
         text = base_info + "⚠️ Заказ с таким orderId не найден в памяти бота.\n"
 
-    # Добавим сырое тело JSON, чтобы видеть структуру
     pretty_json = json.dumps(data, ensure_ascii=False, indent=2)
     text += "\n<pre>" + pretty_json + "</pre>"
 
-    if is_success and tg_app is not None:
-        try:
-            tg_app.create_task(_notify_admin(text))
-        except Exception:
-            logging.exception("Не удалось поставить задачу отправки админу")
+    if is_success:
+        send_admin_notification(text)
 
     # Пока не удаляем ORDERS[order_id], чтобы можно было отлаживать повторы
     return {"ok": True}
@@ -697,4 +698,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
