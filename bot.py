@@ -29,7 +29,7 @@ TOKEN = "8496640654:AAGIfAbZivdDPH1mbNSlENWHyXfDIgpJKaM"
 LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"   # ID проекта (shopId)
 LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"  # Секретный ключ API
 
-# Дополнительный ключ для проверки подписи вебхуков
+# Дополнительный ключ для проверки подписи вебхуков (пока не используем)
 LAVA_WEBHOOK_SECRET = "606cffa20dd419c84471f57f2cb39e7072280651"
 
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
@@ -39,7 +39,6 @@ LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
 
 # === Куда присылать уведомления об оплате ===
 ADMIN_CHAT_ID = 1041184050
-
 
 # === Логирование ===
 logging.basicConfig(
@@ -131,34 +130,28 @@ flask_app = Flask(__name__)
 
 def verify_lava_signature(raw_body: bytes, signature: str | None) -> bool:
     """
-    Проверка подписи вебхука LAVA.
+    ВРЕМЕННО: подпись не проверяем, только логируем.
+    Потом, когда увидим реальный формат подписи от LAVA, включим проверку.
     """
-    if not signature:
-        logging.warning("Webhook без подписи")
-        return False
-
-    expected = hmac.new(
-        LAVA_WEBHOOK_SECRET.encode("utf-8"),
-        msg=raw_body,
-        digestmod=hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature)
+    logging.info("LAVA webhook Signature header: %s", signature)
+    logging.info("LAVA webhook raw body: %s", raw_body.decode("utf-8", "ignore"))
+    return True
 
 
 @flask_app.route("/lava-webhook", methods=["POST"])
 def lava_webhook():
     """
-    Вебхук от LAVA: проверяем статус платежа и шлём уведомление в Telegram.
+    Вебхук от LAVA: сейчас считаем ЛЮБОЙ вебхук успешным платежом,
+    чтобы ты гарантированно получал уведомления и видел payload.
+    Потом сузим логику по реальному JSON-ответу.
     """
     global tg_app
 
     raw_body = request.data or b""
     signature = request.headers.get("Signature")
 
-    if not verify_lava_signature(raw_body, signature):
-        logging.warning("Неверная подпись вебхука LAVA")
-        return {"ok": False, "error": "bad signature"}, 400
+    # Временно всегда True, только логируем
+    verify_lava_signature(raw_body, signature)
 
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -166,56 +159,71 @@ def lava_webhook():
         logging.exception("Не удалось распарсить JSON вебхука LAVA")
         return {"ok": False, "error": "bad json"}, 400
 
-    logging.info("LAVA webhook payload: %s", data)
+    logging.info("LAVA webhook parsed JSON: %s", data)
 
     order_id = str(data.get("orderId") or data.get("order_id") or "").strip()
-    status = str(data.get("status") or data.get("payment_status") or "").lower()
+    status = str(
+        data.get("status")
+        or data.get("state")
+        or data.get("payment_status")
+        or data.get("paymentStatus")
+        or ""
+    ).lower()
 
-    # при необходимости подправишь под точные статусы из доки LAVA
-    is_success = status in ("success", "succeeded", "paid", "completed", "1")
+    # ВРЕМЕННО: считаем вебхук успешным даже если статус не распознан,
+    # чтобы просто получить уведомление с сырым JSON.
+    is_success = True
 
     if not order_id:
         logging.warning("Webhook без orderId: %s", data)
-        return {"ok": True}
-
-    order = ORDERS.get(order_id)
-    if not order:
-        logging.warning("Webhook для неизвестного orderId=%s", order_id)
-        return {"ok": True}
-
-    if not is_success:
-        logging.info("Платёж по orderId=%s неуспешен, статус=%s", order_id, status)
-        return {"ok": True}
-
-    # Формируем сообщение админу
-    username = order.get("buyer_username")
-    if username:
-        buyer_mention = f"@{username}"
+        # Всё равно отправим тебе уведомление, чтобы ты видел json
+        order = None
     else:
-        buyer_mention = f"id {order['buyer_id']}"
+        order = ORDERS.get(order_id)
 
-    gift_to = order.get("gift_to") or "самому себе"
+    # Формируем текст для администратора
+    base_info = (
+        "💸 <b>Webhook от LAVA (тестовый режим обработки)</b>\n\n"
+        f"🧾 <b>OrderId:</b> {order_id or 'нет'}\n"
+        f"📊 <b>Status (сырой):</b> {status or 'не передан'}\n\n"
+    )
 
-    if order["type"] == "stars":
-        text = (
-            "💸 <b>Новый оплаченный заказ (LAVA)</b>\n\n"
-            f"👤 <b>Кто купил:</b> {buyer_mention}\n"
-            f"🎁 <b>Кому:</b> {gift_to}\n"
-            f"⭐ <b>Что купил:</b> Telegram Stars\n"
-            f"🔢 <b>Количество:</b> {order['stars_count']} ⭐️\n"
-            f"💰 <b>Сумма:</b> {order['price']} ₽\n"
-            f"🧾 <b>OrderId:</b> {order_id}"
-        )
+    if order:
+        username = order.get("buyer_username")
+        if username:
+            buyer_mention = f"@{username}"
+        else:
+            buyer_mention = f"id {order['buyer_id']}"
+
+        gift_to = order.get("gift_to") or "самому себе"
+
+        if order["type"] == "stars":
+            text = (
+                base_info +
+                "📦 <b>Данные заказа (из бота):</b>\n"
+                f"👤 <b>Кто купил:</b> {buyer_mention}\n"
+                f"🎁 <b>Кому:</b> {gift_to}\n"
+                f"⭐ <b>Что купил:</b> Telegram Stars\n"
+                f"🔢 <b>Количество:</b> {order['stars_count']} ⭐️\n"
+                f"💰 <b>Сумма:</b> {order['price']} ₽\n"
+            )
+        else:
+            text = (
+                base_info +
+                "📦 <b>Данные заказа (из бота):</b>\n"
+                f"👤 <b>Кто купил:</b> {buyer_mention}\n"
+                f"🎁 <b>Кому:</b> {gift_to}\n"
+                f"👑 <b>Что купил:</b> Telegram Premium\n"
+                f"📦 <b>Тариф:</b> {order['premium_name']}\n"
+                f"💰 <b>Сумма:</b> {order['price']} ₽\n"
+            )
     else:
-        text = (
-            "💸 <b>Новый оплаченный заказ (LAVA)</b>\n\n"
-            f"👤 <b>Кто купил:</b> {buyer_mention}\n"
-            f"🎁 <b>Кому:</b> {gift_to}\n"
-            f"👑 <b>Что купил:</b> Telegram Premium\n"
-            f"📦 <b>Тариф:</b> {order['premium_name']}\n"
-            f"💰 <b>Сумма:</b> {order['price']} ₽\n"
-            f"🧾 <b>OrderId:</b> {order_id}"
-        )
+        # Если orderId не нашли — просто шлём сырые данные
+        text = base_info + "⚠️ Заказ с таким orderId не найден в памяти бота.\n"
+
+    # Добавим сырое тело JSON в конце, чтобы видеть структуру
+    pretty_json = json.dumps(data, ensure_ascii=False, indent=2)
+    text += "\n<pre>" + pretty_json + "</pre>"
 
     if tg_app is not None:
         try:
@@ -227,11 +235,7 @@ def lava_webhook():
         except Exception:
             logging.exception("Не удалось отправить сообщение админу")
 
-    try:
-        del ORDERS[order_id]
-    except KeyError:
-        pass
-
+    # Не удаляем ORDERS[order_id], чтобы можно было отладить повторный webhook, если что
     return {"ok": True}
 
 
