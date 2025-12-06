@@ -4,6 +4,9 @@ import logging
 import json
 import hmac
 import hashlib
+import threading
+
+from flask import Flask, request
 
 from telegram import (
     Update,
@@ -19,15 +22,24 @@ from telegram.ext import (
     filters,
 )
 
-from keep_alive import keep_alive
-
 # === Токен бота ===
 TOKEN = "8496640654:AAGIfAbZivdDPH1mbNSlENWHyXfDIgpJKaM"
 
 # === LAVA (Business) ===
-LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"  # ID проекта (shopId)
-LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"  # Секретный ключ
+LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"   # ID проекта (shopId)
+LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"  # Секретный ключ API
+
+# Дополнительный ключ для проверки подписи вебхуков
+LAVA_WEBHOOK_SECRET = "606cffa20dd419c84471f57f2cb39e7072280651"
+
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
+
+# URL, который указан в LAVA в поле URL Webhook
+LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
+
+# === Куда присылать уведомления об оплате ===
+ADMIN_CHAT_ID = 1041184050
+
 
 # === Логирование ===
 logging.basicConfig(
@@ -42,35 +54,32 @@ PREMIUM_ITEMS = {
     "👑 12 месяцев": {"name": "👑 12 месяцев", "price": 2500},
 }
 
+# === Глобальное приложение Telegram и память заказов ===
+tg_app = None  # сюда сохраним инстанс Application
+
+# ORDERS[order_id] = {...}
+ORDERS = {}
+
 
 # === Создание инвойса в LAVA ===
-def create_lava_invoice(amount_rub: int, description: str, return_url: str) -> str | None:
-    """
-    Создаём счёт в LAVA и возвращаем ссылку на оплату.
-    Документация:
-    POST https://api.lava.ru/business/invoice/create
-    Поля: sum, orderId, shopId, successUrl, failUrl, comment, ...
-    Подпись: HMAC-SHA256(json_body, secret_key) в заголовке Signature
-    """
-
-    # Генерируем уникальный orderId
-    order_id = str(uuid.uuid4())
-
-    # Тело запроса
+def create_lava_invoice(
+    amount_rub: int,
+    description: str,
+    return_url: str,
+    order_id: str,
+) -> str | None:
     payload = {
-        "sum": float(f"{amount_rub:.2f}"),  # LAVA ждёт float
+        "sum": float(f"{amount_rub:.2f}"),
         "orderId": order_id,
         "shopId": LAVA_SHOP_ID,
         "successUrl": return_url,
         "failUrl": return_url,
+        "hookUrl": LAVA_HOOK_URL,
         "comment": description,
-        # "hookUrl": "...",  # если будешь делать вебхуки — сюда URL твоего обработчика
     }
 
-    # Сериализация JSON строго в том виде, который подписываем
     json_body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
-    # Подпись HMAC-SHA256(JSON, secret_key)
     signature = hmac.new(
         LAVA_SECRET_KEY.encode("utf-8"),
         msg=json_body.encode("utf-8"),
@@ -86,7 +95,7 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str) -> s
     try:
         resp = requests.post(
             LAVA_INVOICE_URL,
-            data=json_body.encode("utf-8"),  # data-raw JSON
+            data=json_body.encode("utf-8"),
             headers=headers,
             timeout=15,
         )
@@ -96,12 +105,10 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str) -> s
             return None
 
         data = resp.json()
-        # Ожидаем, что реальный URL счета лежит в data / invoice и т.п.
         invoice_data = data.get("data") or data.get("invoice") or data
 
         pay_url = None
         if isinstance(invoice_data, dict):
-            # Пробуем несколько распространённых ключей
             for key in ("url", "URL", "payUrl", "payment_url", "paymentUrl"):
                 if key in invoice_data and invoice_data[key]:
                     pay_url = invoice_data[key]
@@ -116,6 +123,121 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str) -> s
     except Exception as e:
         logging.exception("LAVA create_invoice exception: %s", e)
         return None
+
+
+# === Flask-сервер для вебхуков LAVA ===
+flask_app = Flask(__name__)
+
+
+def verify_lava_signature(raw_body: bytes, signature: str | None) -> bool:
+    """
+    Проверка подписи вебхука LAVA.
+    """
+    if not signature:
+        logging.warning("Webhook без подписи")
+        return False
+
+    expected = hmac.new(
+        LAVA_WEBHOOK_SECRET.encode("utf-8"),
+        msg=raw_body,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
+
+
+@flask_app.route("/lava-webhook", methods=["POST"])
+def lava_webhook():
+    """
+    Вебхук от LAVA: проверяем статус платежа и шлём уведомление в Telegram.
+    """
+    global tg_app
+
+    raw_body = request.data or b""
+    signature = request.headers.get("Signature")
+
+    if not verify_lava_signature(raw_body, signature):
+        logging.warning("Неверная подпись вебхука LAVA")
+        return {"ok": False, "error": "bad signature"}, 400
+
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        logging.exception("Не удалось распарсить JSON вебхука LAVA")
+        return {"ok": False, "error": "bad json"}, 400
+
+    logging.info("LAVA webhook payload: %s", data)
+
+    order_id = str(data.get("orderId") or data.get("order_id") or "").strip()
+    status = str(data.get("status") or data.get("payment_status") or "").lower()
+
+    # при необходимости подправишь под точные статусы из доки LAVA
+    is_success = status in ("success", "succeeded", "paid", "completed", "1")
+
+    if not order_id:
+        logging.warning("Webhook без orderId: %s", data)
+        return {"ok": True}
+
+    order = ORDERS.get(order_id)
+    if not order:
+        logging.warning("Webhook для неизвестного orderId=%s", order_id)
+        return {"ok": True}
+
+    if not is_success:
+        logging.info("Платёж по orderId=%s неуспешен, статус=%s", order_id, status)
+        return {"ok": True}
+
+    # Формируем сообщение админу
+    username = order.get("buyer_username")
+    if username:
+        buyer_mention = f"@{username}"
+    else:
+        buyer_mention = f"id {order['buyer_id']}"
+
+    gift_to = order.get("gift_to") or "самому себе"
+
+    if order["type"] == "stars":
+        text = (
+            "💸 <b>Новый оплаченный заказ (LAVA)</b>\n\n"
+            f"👤 <b>Кто купил:</b> {buyer_mention}\n"
+            f"🎁 <b>Кому:</b> {gift_to}\n"
+            f"⭐ <b>Что купил:</b> Telegram Stars\n"
+            f"🔢 <b>Количество:</b> {order['stars_count']} ⭐️\n"
+            f"💰 <b>Сумма:</b> {order['price']} ₽\n"
+            f"🧾 <b>OrderId:</b> {order_id}"
+        )
+    else:
+        text = (
+            "💸 <b>Новый оплаченный заказ (LAVA)</b>\n\n"
+            f"👤 <b>Кто купил:</b> {buyer_mention}\n"
+            f"🎁 <b>Кому:</b> {gift_to}\n"
+            f"👑 <b>Что купил:</b> Telegram Premium\n"
+            f"📦 <b>Тариф:</b> {order['premium_name']}\n"
+            f"💰 <b>Сумма:</b> {order['price']} ₽\n"
+            f"🧾 <b>OrderId:</b> {order_id}"
+        )
+
+    if tg_app is not None:
+        try:
+            tg_app.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=text,
+                parse_mode="HTML",
+            )
+        except Exception:
+            logging.exception("Не удалось отправить сообщение админу")
+
+    try:
+        del ORDERS[order_id]
+    except KeyError:
+        pass
+
+    return {"ok": True}
+
+
+def run_flask():
+    # Flask слушает порт 8080 на всех интерфейсах
+    flask_app.run(host="0.0.0.0", port=8080)
 
 
 # === /start ===
@@ -277,15 +399,32 @@ async def process_stars_order(
         await show_agreement(update, context)
         return
 
-    description = f"{stars_count} Telegram Stars для {update.effective_user.id}"
-    return_url = "https://t.me/prem1umshop_star_bot"
+    user = update.effective_user
+    description = f"{stars_count} Telegram Stars для {user.id}"
+    return_url = "https://t.me/prem1umshopbot"
 
-    payment_url = create_lava_invoice(price, description, return_url)
+    order_id = str(uuid.uuid4())
+
+    gift_username = context.user_data.get("gift_username")
+    is_gift = bool(context.user_data.get("gift_mode") and gift_username)
+
+    ORDERS[order_id] = {
+        "type": "stars",
+        "buyer_id": user.id,
+        "buyer_username": user.username,
+        "buyer_fullname": user.full_name,
+        "gift_to": gift_username if is_gift else None,
+        "stars_count": stars_count,
+        "price": price,
+    }
+
+    payment_url = create_lava_invoice(price, description, return_url, order_id)
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
             "Попробуйте ещё раз чуть позже или напишите в поддержку: @PREM1UMSHOP"
         )
+        ORDERS.pop(order_id, None)
         return
 
     msg = (
@@ -315,6 +454,7 @@ async def process_stars_order(
         "stars_count": stars_count,
         "price": price,
         "payment_url": payment_url,
+        "order_id": order_id,
     }
 
 
@@ -351,15 +491,32 @@ async def process_premium_order(
         await show_agreement(update, context)
         return
 
-    description = f"{name} Telegram Premium для {update.effective_user.id}"
-    return_url = "https://t.me/prem1umshop_star_bot"
+    user = update.effective_user
+    description = f"{name} Telegram Premium для {user.id}"
+    return_url = "https://t.me/prem1umshopbot"
 
-    payment_url = create_lava_invoice(price, description, return_url)
+    order_id = str(uuid.uuid4())
+
+    gift_username = context.user_data.get("gift_username")
+    is_gift = bool(context.user_data.get("gift_mode") and gift_username)
+
+    ORDERS[order_id] = {
+        "type": "premium",
+        "buyer_id": user.id,
+        "buyer_username": user.username,
+        "buyer_fullname": user.full_name,
+        "gift_to": gift_username if is_gift else None,
+        "premium_name": name,
+        "price": price,
+    }
+
+    payment_url = create_lava_invoice(price, description, return_url, order_id)
     if not payment_url:
         await update.message.reply_text(
             "⚠️ Не удалось сформировать ссылку на оплату.\n"
             "Попробуйте ещё раз чуть позже или напишите в поддержку: @PREM1UMSHOP"
         )
+        ORDERS.pop(order_id, None)
         return
 
     msg = (
@@ -389,6 +546,7 @@ async def process_premium_order(
         "name": name,
         "price": price,
         "payment_url": payment_url,
+        "order_id": order_id,
     }
 
 
@@ -407,7 +565,6 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
 
-    # Главное меню
     if user_text == "⭐️ Telegram Stars":
         await show_stars(update, context)
         return
@@ -424,7 +581,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Стадия оплаты
     if user_text == "✅ Я оплатил":
         await update.message.reply_text(
             "✅ Спасибо! Если платёж прошёл, заказ будет обработан в ближайшее время.\n"
@@ -442,7 +598,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Ввод юзернейма для подарка
     if context.user_data.get("gift_mode") and not context.user_data.get(
         "gift_username"
     ):
@@ -452,7 +607,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["gift_username"] = username
 
-        # Определяем, что дарим — Stars или Premium
         if context.user_data.get("product_type") == "premium" or context.user_data.get(
             "category"
         ) == "premium":
@@ -461,7 +615,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_stars_purchase(update, context)
         return
 
-    # Выбор «купить себе / подарить другу»
     if user_text == "🎁 Купить себе":
         context.user_data["gift_mode"] = False
         context.user_data["gift_username"] = None
@@ -479,7 +632,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_gift_selection(update, context)
         return
 
-    # Пакеты звёзд
     star_packages = {
         "100 ⭐️ - 160Р": 100,
         "150 ⭐️ - 240Р": 150,
@@ -492,13 +644,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_stars_order(update, context, star_packages[user_text])
         return
 
-    # Пакеты Premium
     if user_text in PREMIUM_ITEMS:
         item = PREMIUM_ITEMS[user_text]
         await process_premium_order(update, context, item["name"], item["price"])
         return
 
-    # Пользователь ввёл число — кастомное количество Stars
     try:
         stars_count = int(user_text)
         if stars_count < 50:
@@ -513,18 +663,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === Запуск ===
 def main():
-    keep_alive()
-    app = Application.builder().token(TOKEN).build()
+    global tg_app
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(
+    # Запускаем Flask (вебхук LAVA) в отдельном потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    tg_app = Application.builder().token(TOKEN).build()
+
+    tg_app.add_handler(CommandHandler("start", start))
+    tg_app.add_handler(
         MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent)
     )
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🤖 PREM1UMSHOP бот запущен...")
-    app.run_polling()
+    tg_app.run_polling()
 
 
 if __name__ == "__main__":
     main()
+
