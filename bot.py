@@ -34,9 +34,11 @@ LAVA_SECRET_KEY = os.getenv("LAVA_SECRET_KEY")
 LAVA_WEBHOOK_SECRET = os.getenv("LAVA_WEBHOOK_SECRET")
 ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
-# Проверка ключей
+# === ПРОВЕРКА КЛЮЧЕЙ ===
+# Если ключей нет, бот сразу напишет об этом и выключится, а не упадет с ошибкой позже
 if not TOKEN or not LAVA_SECRET_KEY:
     print("❌ ОШИБКА: Не найдены ключи в файле .env!")
+    print("Убедитесь, что вы создали файл .env и заполнили его.")
     exit()
 
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
@@ -84,8 +86,7 @@ PREMIUM_ITEMS = {
     "👑 12 месяцев": {"name": "👑 12 месяцев", "price": 2500},
 }
 
-# === Глобальное приложение Telegram и память заказов ===
-tg_app: Application | None = None
+# === Память заказов (хранится в оперативной памяти) ===
 ORDERS: dict[str, dict] = {}
 
 
@@ -239,11 +240,11 @@ async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_photo(chat_id=chat_id, photo=photo_id, caption=caption_text, parse_mode="HTML")
                 count += 1
-                await asyncio.sleep(0.05) # Небольшая пауза чтобы телеграм не забанил за спам
+                await asyncio.sleep(0.05) # Небольшая пауза
             except Exception:
                 pass
     else:
-        # Если просто текст (без ответа на фото)
+        # Если просто текст
         if not caption_text:
             await update.message.reply_text("❗ Сделай Reply на фото с командой /post Текст\nИли просто /post Текст")
             return
@@ -259,7 +260,7 @@ async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Успешно отправлено: {count}")
 
 
-# === ОСТАЛЬНЫЕ ФУНКЦИИ (Сокращены для удобства, логика та же) ===
+# === ОСТАЛЬНЫЕ ФУНКЦИИ ===
 async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\nДокументы и поддержка: @PREM1UMSHOP"
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
@@ -370,18 +371,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 await update.message.reply_text("Используй меню.")
 
+# === ГЛАВНАЯ ФУНКЦИЯ ===
 def main():
-    global tg_app
+    # Запускаем Flask (вебхук LAVA) в отдельном потоке
     threading.Thread(target=run_flask, daemon=True).start()
-    tg_app = Application.builder().token(TOKEN).build()
+
+    # Создаем бота (БЕЗ глобальной переменной, чтобы не было ошибок)
+    application = Application.builder().token(TOKEN).build()
     
-    tg_app.add_handler(CommandHandler("start", start))
-    tg_app.add_handler(CommandHandler("post", broadcast_post)) # <--- НОВАЯ КОМАНДА
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("post", broadcast_post)) 
     
-    tg_app.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
-    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("🤖 Бот запущен...")
+    
+    # Запускаем!
+    application.run_polling()
 
 if __name__ == "__main__":
-    print("🤖 Бот запущен...")
-    tg_app.run_polling()
     main()
