@@ -6,6 +6,7 @@ import hmac
 import hashlib
 import threading
 import os
+from dotenv import load_dotenv  # Импортируем загрузчик переменных
 
 from flask import Flask, request
 
@@ -23,36 +24,30 @@ from telegram.ext import (
     filters,
 )
 
-# === Токен бота ===
-TOKEN = "8496640654:AAGIfAbZivdDPH1mbNSlENWHyXfDIgpJKaM"
+# === ЗАГРУЗКА ПЕРЕМЕННЫХ ИЗ ФАЙЛА .env ===
+load_dotenv()  # Эта команда ищет файл .env и загружает настройки
 
-# === LAVA (Business) ===
-LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"
-LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"
-LAVA_WEBHOOK_SECRET = "606cffa20dd419c84471f57f2cb39e7072280651"
+# Теперь мы берем ключи из окружения, а не пишем их открытым текстом
+TOKEN = os.getenv("BOT_TOKEN")
+LAVA_SHOP_ID = os.getenv("LAVA_SHOP_ID")
+LAVA_SECRET_KEY = os.getenv("LAVA_SECRET_KEY")
+# Если ключа нет в файле .env, бот предупредит
+if not TOKEN or not LAVA_SECRET_KEY:
+    print("❌ ОШИБКА: Не найдены ключи в файле .env!")
+    exit()
+
+LAVA_WEBHOOK_SECRET = os.getenv("LAVA_WEBHOOK_SECRET")
+ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
+
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
 LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
 
-# === Куда присылать уведомления об оплате ===
-ADMIN_CHAT_ID = 1041184050
-
 # === НАСТРОЙКИ КАРТИНОК ===
-# Убедись, что файлы с такими именами лежат в папке images
 IMG_DIR = "images"
-
-# 1. Главное меню
 IMG_MAIN_MENU = os.path.join(IMG_DIR, "ПлашкаБотПШ 1.png")
-
-# 2. Меню выбора "Себе/В подарок" (Используем одну картинку для обоих разделов)
 IMG_BUY_GIFT = os.path.join(IMG_DIR, "ПлашкаБотПШ 2.png")
-
-# 3. Выбор количества звезд
 IMG_STARS_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 3.png")
-
-# 4. Соглашение
 IMG_AGREEMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 4.png")
-
-# 5. Оплата (финал)
 IMG_PAYMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 5.png")
 
 
@@ -137,7 +132,6 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str, orde
 flask_app = Flask(__name__)
 
 def verify_lava_signature(raw_body: bytes, signature: str | None) -> bool:
-    # Здесь можно включить строгую проверку подписи, если нужно
     return True
 
 
@@ -250,9 +244,6 @@ def run_flask():
 
 # === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ ФОТО ===
 async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
-    """
-    Пытается отправить фото. Если фото нет — отправляет просто текст.
-    """
     try:
         with open(image_path, 'rb') as photo_file:
             await update.message.reply_photo(
@@ -286,11 +277,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Выбери категорию:</b>"
     )
     
-    # Используем ПлашкаБотПШ 1
     await send_photo_message(update, IMG_MAIN_MENU, text, reply_markup)
 
 
-# === О сервисе и документы (Без фото, так как нет в списке, либо можно использовать IMG_MAIN_MENU) ===
+# === О сервисе и документы ===
 async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
@@ -312,7 +302,6 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
-    # Используем текстовое сообщение или можешь поставить IMG_MAIN_MENU, если хочешь
     await update.message.reply_html(text, reply_markup=reply_markup)
 
 
@@ -325,7 +314,6 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🎁 Купить себе", "🎀 Подарить другу"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # Используем ПлашкаБотПШ 2
     await send_photo_message(update, IMG_BUY_GIFT, stars_info, reply_markup, parse_mode="HTML")
 
 
@@ -338,7 +326,6 @@ async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🎁 Купить себе", "🎀 Подарить другу"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # Используем ПлашкаБотПШ 2
     await send_photo_message(update, IMG_BUY_GIFT, premium_info, reply_markup, parse_mode="HTML")
 
 
@@ -373,7 +360,6 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["✅ Я согласен"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # Используем ПлашкаБотПШ 4
     await send_photo_message(update, IMG_AGREEMENT, agreement_text, reply_markup)
 
 
@@ -421,7 +407,6 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # Используем ПлашкаБотПШ 3
     await send_photo_message(update, IMG_STARS_AMOUNT, stars_info, reply_markup, parse_mode=None)
 
 
@@ -478,7 +463,6 @@ async def process_stars_order(
         [[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=payment_url)]]
     )
     
-    # Используем ПлашкаБотПШ 5 (Нажмите снизу для оплаты)
     await send_photo_message(update, IMG_PAYMENT, msg, pay_inline_kb)
 
     nav_kb = ReplyKeyboardMarkup(
@@ -500,7 +484,7 @@ async def process_stars_order(
     }
 
 
-# === Выбор тарифа Premium (Тут можно использовать фото 2 или без фото) ===
+# === Выбор тарифа Premium ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catalog_text = "👑 Telegram Premium:\n\n"
     for item in PREMIUM_ITEMS.values():
@@ -514,7 +498,6 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [["💎 3 месяца", "🚀 6 месяцев"], ["👑 12 месяцев", "🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # Можно использовать IMG_BUY_GIFT (ПлашкаБотПШ 2) как фон, или просто текст
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
 
 
@@ -574,7 +557,6 @@ async def process_premium_order(
         [[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=payment_url)]]
     )
     
-    # Используем ПлашкаБотПШ 5 (Нажмите снизу для оплаты)
     await send_photo_message(update, IMG_PAYMENT, msg, pay_inline_kb)
 
     nav_kb = ReplyKeyboardMarkup(
@@ -604,7 +586,6 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Ответим в ближайшее время ⚡️"
     )
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
-    # Для поддержки фото не было в списке, шлем текст
     await update.message.reply_text(support_text, reply_markup=reply_markup)
 
 
@@ -729,4 +710,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
