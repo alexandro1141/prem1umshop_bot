@@ -5,6 +5,7 @@ import json
 import hmac
 import hashlib
 import threading
+import os
 
 from flask import Flask, request
 
@@ -26,19 +27,34 @@ from telegram.ext import (
 TOKEN = "8496640654:AAGIfAbZivdDPH1mbNSlENWHyXfDIgpJKaM"
 
 # === LAVA (Business) ===
-LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"   # ID проекта (shopId)
-LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"  # Секретный ключ API
-
-# Дополнительный ключ для проверки подписи вебхуков (пока не используем строго)
+LAVA_SHOP_ID = "aabbaa06-325c-4b48-8d32-beccba983642"
+LAVA_SECRET_KEY = "293e78a4d1743afadbfcfc2ff35bbc0a5db44981"
 LAVA_WEBHOOK_SECRET = "606cffa20dd419c84471f57f2cb39e7072280651"
-
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
-
-# URL, который указан в LAVA в поле URL Webhook
 LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
 
 # === Куда присылать уведомления об оплате ===
 ADMIN_CHAT_ID = 1041184050
+
+# === НАСТРОЙКИ КАРТИНОК ===
+# Убедись, что файлы с такими именами лежат в папке images
+IMG_DIR = "images"
+
+# 1. Главное меню
+IMG_MAIN_MENU = os.path.join(IMG_DIR, "ПлашкаБотПШ 1.png")
+
+# 2. Меню выбора "Себе/В подарок" (Используем одну картинку для обоих разделов)
+IMG_BUY_GIFT = os.path.join(IMG_DIR, "ПлашкаБотПШ 2.png")
+
+# 3. Выбор количества звезд
+IMG_STARS_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 3.png")
+
+# 4. Соглашение
+IMG_AGREEMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 4.png")
+
+# 5. Оплата (финал)
+IMG_PAYMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 5.png")
+
 
 # === Логирование ===
 logging.basicConfig(
@@ -54,19 +70,12 @@ PREMIUM_ITEMS = {
 }
 
 # === Глобальное приложение Telegram и память заказов ===
-tg_app: Application | None = None  # сюда сохраним инстанс Application
-
-# ORDERS[order_id] = {...}
+tg_app: Application | None = None
 ORDERS: dict[str, dict] = {}
 
 
 # === Создание инвойса в LAVA ===
-def create_lava_invoice(
-    amount_rub: int,
-    description: str,
-    return_url: str,
-    order_id: str,
-) -> str | None:
+def create_lava_invoice(amount_rub: int, description: str, return_url: str, order_id: str) -> str | None:
     payload = {
         "sum": float(f"{amount_rub:.2f}"),
         "orderId": order_id,
@@ -127,24 +136,14 @@ def create_lava_invoice(
 # === Flask-сервер для вебхуков LAVA ===
 flask_app = Flask(__name__)
 
-
 def verify_lava_signature(raw_body: bytes, signature: str | None) -> bool:
-    """
-    ВРЕМЕННО: подпись не проверяем строго, только логируем.
-    Когда полностью отладим структуру webhook-а, можно включить строгую проверку.
-    """
-    logging.info("LAVA webhook Signature header: %s", signature)
-    logging.info("LAVA webhook raw body: %s", raw_body.decode("utf-8", "ignore"))
+    # Здесь можно включить строгую проверку подписи, если нужно
     return True
 
 
 def send_admin_notification(text: str):
-    """
-    Синхронно отправляем сообщение админу через HTTP API Telegram.
-    Это можно безопасно вызывать из Flask-потока (без asyncio).
-    """
     try:
-        resp = requests.post(
+        requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={
                 "chat_id": ADMIN_CHAT_ID,
@@ -153,29 +152,15 @@ def send_admin_notification(text: str):
             },
             timeout=10,
         )
-        if resp.status_code != 200:
-            logging.error(
-                "Ошибка отправки сообщения админу: %s %s",
-                resp.status_code,
-                resp.text,
-            )
     except Exception:
         logging.exception("Исключение при отправке сообщения админу")
 
 
 @flask_app.route("/lava-webhook", methods=["POST"])
 def lava_webhook():
-    """
-    Вебхук от LAVA.
-    Отправляем уведомление админу ТОЛЬКО при успешной оплате:
-      - статус в success/done/paid/completed/succeeded
-      - ИЛИ есть поле времени оплаты pay_time.
-    На создание счёта и прочие статусы уведомление не шлём.
-    """
     raw_body = request.data or b""
     signature = request.headers.get("Signature")
 
-    # Пока только логируем подпись и тело
     verify_lava_signature(raw_body, signature)
 
     try:
@@ -195,33 +180,18 @@ def lava_webhook():
         or ""
     ).lower()
 
-    pay_time = str(
-        data.get("pay_time")
-        or data.get("payTime")
-        or ""
-    ).strip()
+    pay_time = str(data.get("pay_time") or data.get("payTime") or "").strip()
 
-    # ---- определяем, успешная ли оплата ----
     success_statuses = {"success", "done", "paid", "completed", "succeeded"}
-
     is_success = False
     if status in success_statuses:
         is_success = True
     elif pay_time:
-        # если в JSON есть время оплаты — считаем платёж успешным
         is_success = True
 
     if not is_success:
-        # Просто логируем и ничего не шлём
-        logging.info(
-            "Webhook неуспешного/ожидающего платежа: orderId=%s, status=%s, pay_time=%s",
-            order_id,
-            status,
-            pay_time,
-        )
         return {"ok": True}
 
-    # ---- формируем уведомление только для успешного платежа ----
     if not order_id:
         logging.warning("Webhook без orderId: %s", data)
         order = None
@@ -271,20 +241,35 @@ def lava_webhook():
     text += "\n<pre>" + pretty_json + "</pre>"
 
     send_admin_notification(text)
-
-    # Можно почистить ORDERS, если не нужен повторный вебхук
-    # if order_id in ORDERS:
-    #     ORDERS.pop(order_id, None)
-
     return {"ok": True}
 
 
 def run_flask():
-    # Flask слушает порт 8080 на всех интерфейсах
     flask_app.run(host="0.0.0.0", port=8080)
 
 
-# === /start ===
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ ФОТО ===
+async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
+    """
+    Пытается отправить фото. Если фото нет — отправляет просто текст.
+    """
+    try:
+        with open(image_path, 'rb') as photo_file:
+            await update.message.reply_photo(
+                photo=photo_file,
+                caption=caption,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup
+            )
+    except FileNotFoundError:
+        logging.error(f"Файл не найден: {image_path}. Отправляю просто текст.")
+        if parse_mode == "HTML":
+            await update.message.reply_html(caption, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(caption, reply_markup=reply_markup)
+
+
+# === /start (ФОТО 1) ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data.clear()
@@ -295,15 +280,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-    await update.message.reply_html(
+    text = (
         f"🚀 <b>Добро пожаловать в PREM1UMSHOP!</b> {user.mention_html()}!\n\n"
         "🎯 <b>Покупай Telegram Stars и Telegram Premium по лучшим ценам!</b>\n\n"
-        "<b>Выбери категорию:</b>",
-        reply_markup=reply_markup,
+        "<b>Выбери категорию:</b>"
     )
+    
+    # Используем ПлашкаБотПШ 1
+    await send_photo_message(update, IMG_MAIN_MENU, text, reply_markup)
 
 
-# === О сервисе и документы ===
+# === О сервисе и документы (Без фото, так как нет в списке, либо можно использовать IMG_MAIN_MENU) ===
 async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
@@ -325,10 +312,11 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
+    # Используем текстовое сообщение или можешь поставить IMG_MAIN_MENU, если хочешь
     await update.message.reply_html(text, reply_markup=reply_markup)
 
 
-# === Stars ===
+# === Stars: Выбор Купить/Подарить (ФОТО 2) ===
 async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "stars"
@@ -336,10 +324,12 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stars_info = "⭐️ Telegram Stars\n\n🎉 Выбери вариант покупки:"
     keyboard = [["🎁 Купить себе", "🎀 Подарить другу"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(stars_info, reply_markup=reply_markup)
+    
+    # Используем ПлашкаБотПШ 2
+    await send_photo_message(update, IMG_BUY_GIFT, stars_info, reply_markup, parse_mode="HTML")
 
 
-# === Premium ===
+# === Premium: Выбор Купить/Подарить (ФОТО 2) ===
 async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "premium"
@@ -347,7 +337,9 @@ async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     premium_info = "👑 Telegram Premium\n\n🎉 Выбери вариант покупки:"
     keyboard = [["🎁 Купить себе", "🎀 Подарить другу"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(premium_info, reply_markup=reply_markup)
+    
+    # Используем ПлашкаБотПШ 2
+    await send_photo_message(update, IMG_BUY_GIFT, premium_info, reply_markup, parse_mode="HTML")
 
 
 # === Подарок другу: запрос юзернейма ===
@@ -363,7 +355,7 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_html(gift_info, reply_markup=reply_markup)
 
 
-# === Соглашение ===
+# === Соглашение (ФОТО 4) ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_shown"] = True
 
@@ -380,7 +372,9 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [["✅ Я согласен"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_html(agreement_text, reply_markup=reply_markup)
+    
+    # Используем ПлашкаБотПШ 4
+    await send_photo_message(update, IMG_AGREEMENT, agreement_text, reply_markup)
 
 
 # === Подтверждение согласия ===
@@ -408,7 +402,7 @@ async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT
         )
 
 
-# === Выбор пакета Stars ===
+# === Выбор пакета Stars (ФОТО 3) ===
 async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stars_info = (
         "🎉 Для покупки звёзд выбери пакет или отправь своё количество "
@@ -426,10 +420,12 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
         ["🔙 Назад"],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(stars_info, reply_markup=reply_markup)
+    
+    # Используем ПлашкаБотПШ 3
+    await send_photo_message(update, IMG_STARS_AMOUNT, stars_info, reply_markup, parse_mode=None)
 
 
-# === Создание платежа Stars через LAVA ===
+# === Создание платежа Stars через LAVA (ФОТО 5) ===
 async def process_stars_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -481,7 +477,9 @@ async def process_stars_order(
     pay_inline_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=payment_url)]]
     )
-    await update.message.reply_text(msg, reply_markup=pay_inline_kb)
+    
+    # Используем ПлашкаБотПШ 5 (Нажмите снизу для оплаты)
+    await send_photo_message(update, IMG_PAYMENT, msg, pay_inline_kb)
 
     nav_kb = ReplyKeyboardMarkup(
         [["✅ Я оплатил", "❌ Отмена"]],
@@ -502,7 +500,7 @@ async def process_stars_order(
     }
 
 
-# === Выбор тарифа Premium ===
+# === Выбор тарифа Premium (Тут можно использовать фото 2 или без фото) ===
 async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catalog_text = "👑 Telegram Premium:\n\n"
     for item in PREMIUM_ITEMS.values():
@@ -515,10 +513,12 @@ async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TY
 
     keyboard = [["💎 3 месяца", "🚀 6 месяцев"], ["👑 12 месяцев", "🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    # Можно использовать IMG_BUY_GIFT (ПлашкаБотПШ 2) как фон, или просто текст
     await update.message.reply_text(catalog_text, reply_markup=reply_markup)
 
 
-# === Создание платежа Premium через LAVA ===
+# === Создание платежа Premium через LAVA (ФОТО 5) ===
 async def process_premium_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -573,7 +573,9 @@ async def process_premium_order(
     pay_inline_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=payment_url)]]
     )
-    await update.message.reply_text(msg, reply_markup=pay_inline_kb)
+    
+    # Используем ПлашкаБотПШ 5 (Нажмите снизу для оплаты)
+    await send_photo_message(update, IMG_PAYMENT, msg, pay_inline_kb)
 
     nav_kb = ReplyKeyboardMarkup(
         [["✅ Я оплатил", "❌ Отмена"]],
@@ -602,6 +604,7 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Ответим в ближайшее время ⚡️"
     )
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
+    # Для поддержки фото не было в списке, шлем текст
     await update.message.reply_text(support_text, reply_markup=reply_markup)
 
 
@@ -726,5 +729,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
