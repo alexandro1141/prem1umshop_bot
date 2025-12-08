@@ -34,10 +34,13 @@ LAVA_SECRET_KEY = os.getenv("LAVA_SECRET_KEY")
 LAVA_WEBHOOK_SECRET = os.getenv("LAVA_WEBHOOK_SECRET")
 ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
+# === КУРС ВАЛЮТ (НАСТРОЙ ЦЕНУ ТУТ) ===
+STARS_PRICE = 1.6   # Цена за 1 звезду
+TON_PRICE = 150     # Цена за 1 TON (целое число)
+
 # === ПРОВЕРКА КЛЮЧЕЙ ===
 if not TOKEN or not LAVA_SECRET_KEY:
     print("❌ ОШИБКА: Не найдены ключи в файле .env!")
-    print("Убедитесь, что вы создали файл .env и заполнили его.")
     exit()
 
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
@@ -47,17 +50,13 @@ LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
 USERS_FILE = "users.txt"
 
 def save_user(chat_id):
-    """Сохраняет ID пользователя в файл, если его там нет"""
     chat_id = str(chat_id)
     users = set()
-    
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, 'w').close()
-        
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
             users = set(f.read().splitlines())
-    
     if chat_id not in users:
         with open(USERS_FILE, "a") as f:
             f.write(chat_id + "\n")
@@ -69,19 +68,13 @@ IMG_BUY_GIFT = os.path.join(IMG_DIR, "ПлашкаБотПШ 2.png")
 IMG_STARS_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 3.png")
 IMG_AGREEMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 4.png")
 IMG_PAYMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 5.png")
+IMG_TON_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 6.png") # Новая картинка для TON
 
 # === Логирование ===
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-
-# === Каталог Premium ===
-PREMIUM_ITEMS = {
-    "💎 3 месяца": {"name": "💎 3 месяца", "price": 1200},
-    "🚀 6 месяцев": {"name": "🚀 6 месяцев", "price": 1500},
-    "👑 12 месяцев": {"name": "👑 12 месяцев", "price": 2500},
-}
 
 # === Память заказов ===
 ORDERS: dict[str, dict] = {}
@@ -148,7 +141,6 @@ def lava_webhook():
 
     order = ORDERS.get(order_id)
     
-    # Формируем сообщение админу
     text = f"💸 <b>ОПЛАТА LAVA</b>\nOrder: {order_id}\nStatus: {status}\n"
     if order:
         username = order.get("buyer_username")
@@ -159,9 +151,9 @@ def lava_webhook():
         text += f"🎁 <b>Кому:</b> {gift_to}\n"
         
         if order['type'] == 'stars':
-            text += f"⭐ Stars: {order['stars_count']}\n💰 {order['price']} RUB"
-        else:
-            text += f"👑 Premium: {order['premium_name']}\n💰 {order['price']} RUB"
+            text += f"⭐ Stars: {order['amount']}\n💰 {order['price']} RUB"
+        elif order['type'] == 'funds':
+            text += f"💎 Funds (TON): {order['amount']} TON\n💰 {order['price']} RUB"
             
     try:
         requests.post(
@@ -196,22 +188,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user.id)
     context.user_data.clear()
 
+    # ОБНОВЛЕННОЕ МЕНЮ
     keyboard = [
-        ["⭐️ Telegram Stars", "👑 Telegram Premium"],
+        ["⭐️ Telegram Stars", "💎 Funds (TON)"],
         ["💬 Поддержка", "ℹ О сервисе"],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     text = (
         f"🚀 <b>Добро пожаловать в PREM1UMSHOP!</b> {user.mention_html()}!\n\n"
-        "🎯 <b>Покупай Telegram Stars и Telegram Premium по лучшим ценам!</b>\n\n"
+        "🎯 <b>Покупай Telegram Stars и Funds (TON) по лучшим ценам!</b>\n\n"
         "<b>Выбери категорию:</b>"
     )
     
     await send_photo_message(update, IMG_MAIN_MENU, text, reply_markup)
 
 
-# === РАССЫЛКА С ФОТО (КОМАНДА /post) ===
+# === РАССЫЛКА (/post) ===
 async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_CHAT_ID):
         return
@@ -259,7 +252,7 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
         "PREM1UMSHOP (@prem1umshopbot) — сервис по продаже Telegram Stars "
-        "и Telegram Premium.\n\n"
+        "и Telegram Funds (TON).\n\n"
         "<b>Документы сервиса:</b>\n"
         "• Политика возврата денежных средств\n"
         "• Публичная оферта\n"
@@ -277,7 +270,7 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
     await update.message.reply_html(text, reply_markup=reply_markup)
 
-# === Stars ===
+# === Stars (Вход в категорию) ===
 async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "stars"
@@ -288,18 +281,25 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_BUY_GIFT, stars_info, reply_markup, parse_mode="HTML")
 
-# === Premium ===
-async def show_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# === FUNDS / TON (Вход в категорию) ===
+async def show_funds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    context.user_data["category"] = "premium"
+    context.user_data["category"] = "funds"
 
-    premium_info = "👑 Telegram Premium\n\n🎉 Выбери вариант покупки:"
+    funds_info = (
+        "💎 <b>Telegram Funds (TON)</b>\n\n"
+        "⚠️ <b>ВАЖНО:</b> TON зачисляются на внутренний баланс Telegram.\n"
+        "Они предназначены <b>только для покупки Telegram Подарков</b>.\n"
+        "🚫 Это <b>НЕ</b> для кошелька @wallet, вывода или переводов.\n\n"
+        "🎉 Выбери вариант покупки:"
+    )
     keyboard = [["🎁 Купить себе", "🎀 Подарить другу"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    await send_photo_message(update, IMG_BUY_GIFT, premium_info, reply_markup, parse_mode="HTML")
+    # Используем ту же картинку "Купить/Подарить"
+    await send_photo_message(update, IMG_BUY_GIFT, funds_info, reply_markup, parse_mode="HTML")
 
-# === Подарок другу ===
+# === Подарок другу (Общий) ===
 async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["gift_mode"] = True
     gift_info = (
@@ -331,27 +331,29 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_AGREEMENT, agreement_text, reply_markup)
 
-# === Согласие ===
+# === Согласие принятие ===
 async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_accepted"] = True
     if "pending_order" in context.user_data:
         d = context.user_data["pending_order"]
-        if d["type"] == "stars": await process_stars_order(update, context, d["count"], True)
-        elif d["type"] == "premium": await process_premium_order(update, context, d["name"], d["price"], True)
+        # Перенаправляем на нужную функцию оплаты
+        if d["type"] == "stars": 
+            await process_stars_order(update, context, d["count"], True)
+        elif d["type"] == "funds": 
+            await process_funds_order(update, context, d["count"], True)
+        
         del context.user_data["pending_order"]
     else:
-        await update.message.reply_text("✅ Соглашение принято.\n💳 Оплата скоро будет доступна!")
+        await update.message.reply_text("✅ Соглашение принято.")
 
-# === Выбор пакета Stars ===
+# === Выбор количества Stars ===
 async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stars_info = (
         "🎉 Для покупки звёзд выбери пакет или отправь своё количество "
         "(от 50 до 5000 ⭐️)"
     )
     if context.user_data.get("gift_mode") and context.user_data.get("gift_username"):
-        stars_info = (
-            f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + stars_info
-        )
+        stars_info = f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + stars_info
 
     keyboard = [
         ["100 ⭐️ - 160Р", "150 ⭐️ - 240Р"],
@@ -362,13 +364,34 @@ async def show_stars_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await send_photo_message(update, IMG_STARS_AMOUNT, stars_info, reply_markup, parse_mode=None)
 
-# === Процесс оплаты Stars ===
+# === Выбор количества TON (НОВОЕ) ===
+async def show_funds_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    funds_text = (
+        "💎 <b>Введите нужное количество TON</b>\n\n"
+        "🔹 Минимум: <b>1 TON</b>\n"
+        "🔹 Максимум: <b>50 TON</b>\n"
+        "⚠️ Вводите только <b>целое число</b> (например: 5, 10, 24).\n\n"
+        "<i>Средства будут зачислены на внутренний баланс Telegram для покупки подарков.</i>"
+    )
+    
+    if context.user_data.get("gift_mode") and context.user_data.get("gift_username"):
+        funds_text = f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + funds_text
+
+    keyboard = [["🔙 Назад"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    # Используем новую картинку ПлашкаБотПШ 6.png
+    await send_photo_message(update, IMG_TON_AMOUNT, funds_text, reply_markup, parse_mode="HTML")
+
+
+# === Создание заказа Stars ===
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int, bypass_agreement=False):
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
         context.user_data["pending_order"] = {"type": "stars", "count": count}
         await show_agreement(update, context)
         return
-    price = int(count * 1.6)
+    
+    price = int(count * STARS_PRICE)
     order_id = str(uuid.uuid4())
     user = update.effective_user
     
@@ -379,9 +402,8 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "type": "stars",
         "buyer_id": user.id,
         "buyer_username": user.username,
-        "buyer_fullname": user.full_name,
         "gift_to": gift_username if is_gift else None,
-        "stars_count": count,
+        "amount": count,
         "price": price,
     }
     
@@ -400,27 +422,20 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
     await update.message.reply_text("После оплаты нажми:", reply_markup=ReplyKeyboardMarkup([["✅ Я оплатил", "❌ Отмена"]], resize_keyboard=True))
 
-# === Выбор тарифа Premium ===
-async def show_premium_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    catalog_text = "👑 Telegram Premium:\n\n"
-    for item in PREMIUM_ITEMS.values():
-        catalog_text += f"• {item['name']}\n💰 Цена: {item['price']} руб.\n\n"
 
-    if context.user_data.get("gift_mode") and context.user_data.get("gift_username"):
-        catalog_text = (
-            f"🎁 Подарок для {context.user_data['gift_username']}\n\n" + catalog_text
-        )
+# === Создание заказа TON (НОВОЕ) ===
+async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int, bypass_agreement=False):
+    # Проверка на диапазон
+    if not (1 <= count <= 50):
+        await update.message.reply_text("❌ Количество TON должно быть от 1 до 50.")
+        return
 
-    keyboard = [["💎 3 месяца", "🚀 6 месяцев"], ["👑 12 месяцев", "🔙 Назад"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(catalog_text, reply_markup=reply_markup)
-
-# === Процесс оплаты Premium ===
-async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TYPE, name: str, price: int, bypass_agreement=False):
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
-        context.user_data["pending_order"] = {"type": "premium", "name": name, "price": price}
+        context.user_data["pending_order"] = {"type": "funds", "count": count}
         await show_agreement(update, context)
         return
+
+    price = int(count * TON_PRICE)
     order_id = str(uuid.uuid4())
     user = update.effective_user
     
@@ -428,29 +443,30 @@ async def process_premium_order(update: Update, context: ContextTypes.DEFAULT_TY
     is_gift = bool(context.user_data.get("gift_mode") and gift_username)
 
     ORDERS[order_id] = {
-        "type": "premium",
+        "type": "funds",
         "buyer_id": user.id,
         "buyer_username": user.username,
-        "buyer_fullname": user.full_name,
         "gift_to": gift_username if is_gift else None,
-        "premium_name": name,
+        "amount": count,
         "price": price,
     }
 
-    url = create_lava_invoice(price, f"Premium {name} (ID {user.id})", "https://t.me/prem1umshopbot", order_id)
+    url = create_lava_invoice(price, f"Funds {count} TON (ID {user.id})", "https://t.me/prem1umshopbot", order_id)
     if not url:
         await update.message.reply_text("⚠️ Ошибка создания счета.")
         return
 
     msg = (
-        "🎉 Отличный выбор!\n\n"
-        f"Товар: {name}\n"
+        "💎 <b>Подтверждение заказа FUNDS</b>\n\n"
+        f"Товар: {count} TON\n"
         f"Цена: {price} ₽\n\n"
-        "Нажми кнопку ниже, чтобы перейти к оплате."
+        "⚠️ <i>Напоминаем: TON зачисляются для покупки телеграм подарков, вывод или перевод этих стредств невозможен.</i>\n\n"
+        "Нажми кнопку ниже для оплаты."
     )
 
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
     await update.message.reply_text("После оплаты нажми:", reply_markup=ReplyKeyboardMarkup([["✅ Я оплатил", "❌ Отмена"]], resize_keyboard=True))
+
 
 # === Поддержка (ПОЛНЫЙ ТЕКСТ) ===
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,48 +481,91 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === ОБРАБОТЧИК СООБЩЕНИЙ ===
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text == "⭐️ Telegram Stars": await show_stars(update, context)
-    elif text == "👑 Telegram Premium": await show_premium(update, context)
-    elif text == "💬 Поддержка": await show_support(update, context)
-    elif text == "ℹ О сервисе": await show_about(update, context)
-    elif text == "🔙 Назад" or text == "❌ Отмена": await start(update, context)
+    
+    # ГЛАВНОЕ МЕНЮ
+    if text == "⭐️ Telegram Stars": 
+        await show_stars(update, context)
+        return
+    elif text == "💎 Funds (TON)": 
+        await show_funds(update, context)
+        return
+    elif text == "💬 Поддержка": 
+        await show_support(update, context)
+        return
+    elif text == "ℹ О сервисе": 
+        await show_about(update, context)
+        return
+    elif text == "🔙 Назад" or text == "❌ Отмена": 
+        await start(update, context)
+        return
+    
+    # КНОПКИ ОПЛАТЫ
     elif text == "✅ Я оплатил": 
         await update.message.reply_text("✅ Спасибо! Если платёж прошёл, заказ будет обработан в ближайшее время.\nЕсли что-то пошло не так, напишите в поддержку: @PREM1UMSHOP")
         await start(update, context)
+        return
+    
+    # ПОКУПКА СЕБЕ
     elif text == "🎁 Купить себе":
         context.user_data["gift_mode"] = False
         context.user_data["gift_username"] = None
-        if context.user_data.get("category") == "premium": await show_premium_purchase(update, context)
-        else: await show_stars_purchase(update, context)
+        if context.user_data.get("category") == "funds": 
+            await show_funds_purchase(update, context)
+        else: 
+            await show_stars_purchase(update, context)
+        return
+    
+    # ПОДАРОК ДРУГУ
     elif text == "🎀 Подарить другу":
         context.user_data["product_type"] = context.user_data.get("category", "stars")
         await handle_gift_selection(update, context)
+        return
+    
+    # ВВОД ЮЗЕРНЕЙМА ДЛЯ ПОДАРКА
     elif context.user_data.get("gift_mode") and not context.user_data.get("gift_username"):
         u = text.strip()
         if not u.startswith("@"): u = "@" + u
         context.user_data["gift_username"] = u
-        if context.user_data.get("product_type") == "premium" or context.user_data.get("category") == "premium": await show_premium_purchase(update, context)
-        else: await show_stars_purchase(update, context)
-    elif text in PREMIUM_ITEMS: 
-        item = PREMIUM_ITEMS[text]
-        await process_premium_order(update, context, item["name"], item["price"])
-    else:
-        # Пакеты звезд
-        pkgs = {"100 ⭐️ - 160Р": 100, "150 ⭐️ - 240Р": 150, "250 ⭐️ - 400Р": 250, "500 ⭐️ - 800Р": 500, "1000 ⭐️ - 1600Р": 1000, "2500 ⭐️ - 4000Р": 2500}
-        if text in pkgs: await process_stars_order(update, context, pkgs[text])
+        
+        if context.user_data.get("product_type") == "funds" or context.user_data.get("category") == "funds": 
+            await show_funds_purchase(update, context)
+        else: 
+            await show_stars_purchase(update, context)
+        return
+
+    # === ОБРАБОТКА ВВОДА ЧИСЕЛ (STARS или TON) ===
+    
+    # 1. Пакеты звезд (кнопки)
+    star_pkgs = {"100 ⭐️ - 160Р": 100, "150 ⭐️ - 240Р": 150, "250 ⭐️ - 400Р": 250, "500 ⭐️ - 800Р": 500, "1000 ⭐️ - 1600Р": 1000, "2500 ⭐️ - 4000Р": 2500}
+    if text in star_pkgs: 
+        await process_stars_order(update, context, star_pkgs[text])
+        return
+        
+    # 2. Ручной ввод числа
+    try:
+        count = int(text)
+        
+        # Если категория FUNDS (TON)
+        if context.user_data.get("category") == "funds" or context.user_data.get("product_type") == "funds":
+            if 1 <= count <= 50:
+                await process_funds_order(update, context, count)
+            else:
+                await update.message.reply_text("❌ Для TON введите целое число от 1 до 50.")
+        
+        # Иначе это STARS
         else:
-            try:
-                c = int(text)
-                if 50 <= c <= 5000: await process_stars_order(update, context, c)
-                else: await update.message.reply_text("❌ Минимум 50, Максимум 5000.")
-            except:
-                await update.message.reply_text("Используй кнопки ниже!")
+            if 50 <= count <= 5000: 
+                await process_stars_order(update, context, count)
+            else: 
+                await update.message.reply_text("❌ Для Stars минимум 50, максимум 5000.")
+                
+    except ValueError:
+        await update.message.reply_text("❗ Пожалуйста, используйте кнопки или введите корректное число.")
 
 # === ГЛАВНАЯ ФУНКЦИЯ ===
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # СОЗДАЕМ И ЗАПУСКАЕМ ВНУТРИ main(), ЧТОБЫ НЕ БЫЛО ОШИБОК С NoneType
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -515,7 +574,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (ВСЕ ФУНКЦИИ ВОССТАНОВЛЕНЫ)...")
+    print("🤖 Бот запущен (FUNDS/TON MODE)...")
     application.run_polling()
 
 if __name__ == "__main__":
