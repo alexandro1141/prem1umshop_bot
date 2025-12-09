@@ -120,7 +120,7 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str, orde
         return None
 
 
-# === Flask Webhook (С УВЕДОМЛЕНИЕМ КЛИЕНТА) ===
+# === Flask Webhook (С УВЕДОМЛЕНИЕМ) ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/lava-webhook", methods=["POST"])
@@ -165,14 +165,14 @@ def lava_webhook():
     except Exception:
         pass
         
-    # 2. Уведомление ПОКУПАТЕЛЮ (НОВОЕ!)
+    # 2. Уведомление ПОКУПАТЕЛЮ
     if order and order.get('buyer_id'):
         user_text = (
             "✅ <b>Оплата прошла успешно!</b>\n\n"
             "Спасибо за покупку в PREM1UMSHOP.\n"
             "⏳ <b>Срок зачисления:</b> Обычно в течение <b>5 минут</b>.\n"
-            "<i>(В редких случаях зачисление может длиться до 1 часа из-за нагрузки на сеть).</i>\n\n"
-            "Если спустя час средства не поступили — напишите нам в поддержку: @PREM1UMSHOP"
+            "<i>(В редких случаях зачисление может длиться до 1 часа).</i>\n\n"
+            "Ожидайте, скоро мы выдадим ваш заказ!"
         )
         try:
             requests.post(
@@ -428,11 +428,11 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🎉 Отличный выбор!\n\n"
         f"Товар: {count} Telegram Stars ⭐️\n"
         f"Цена: {price} ₽\n\n"
-        "Нажми кнопку ниже, чтобы перейти к оплате."
+        "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
     )
     
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
-    await update.message.reply_text("После оплаты нажми:", reply_markup=ReplyKeyboardMarkup([["✅ Я оплатил", "❌ Отмена"]], resize_keyboard=True))
+    await update.message.reply_text("Для отмены:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
 # === Создание заказа TON ===
@@ -471,12 +471,11 @@ async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "💎 <b>Подтверждение заказа FUNDS</b>\n\n"
         f"Товар: {count} TON\n"
         f"Цена: {price} ₽\n\n"
-        "⚠️ <i>TON зачисляются для покупки подарков, вывод невозможен.</i>\n\n"
-        "Нажми кнопку ниже для оплаты."
+        "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
     )
 
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
-    await update.message.reply_text("После оплаты нажми:", reply_markup=ReplyKeyboardMarkup([["✅ Я оплатил", "❌ Отмена"]], resize_keyboard=True))
+    await update.message.reply_text("Для отмены:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
 # === Поддержка ===
@@ -506,11 +505,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_about(update, context)
         return
     elif text == "🔙 Назад" or text == "❌ Отмена": 
-        await start(update, context)
-        return
-    
-    elif text == "✅ Я оплатил": 
-        await update.message.reply_text("✅ Спасибо! Если платёж прошёл, заказ будет обработан в ближайшее время.\nЕсли что-то пошло не так, напишите в поддержку: @PREM1UMSHOP")
         await start(update, context)
         return
     
