@@ -34,7 +34,7 @@ LAVA_SECRET_KEY = os.getenv("LAVA_SECRET_KEY")
 LAVA_WEBHOOK_SECRET = os.getenv("LAVA_WEBHOOK_SECRET")
 ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
-# === КУРС ВАЛЮТ (МОЖЕШЬ МЕНЯТЬ ТУТ) ===
+# === КУРС ВАЛЮТ ===
 STARS_PRICE = 1.6   # Цена за 1 звезду
 TON_PRICE = 650     # Цена за 1 TON
 
@@ -53,16 +53,13 @@ def save_user(chat_id):
     chat_id = str(chat_id)
     users = set()
     
-    # Создаем файл, если его нет
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, 'w').close()
         
-    # Читаем существующих пользователей
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
             users = set(f.read().splitlines())
     
-    # Если пользователя нет в базе - добавляем
     if chat_id not in users:
         with open(USERS_FILE, "a") as f:
             f.write(chat_id + "\n")
@@ -82,11 +79,11 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-# === Память заказов (хранится пока бот работает) ===
+# === Память заказов ===
 ORDERS: dict[str, dict] = {}
 
 
-# === LAVA API: СОЗДАНИЕ ССЫЛКИ НА ОПЛАТУ ===
+# === LAVA API ===
 def create_lava_invoice(amount_rub: int, description: str, return_url: str, order_id: str) -> str | None:
     payload = {
         "sum": float(f"{amount_rub:.2f}"),
@@ -130,7 +127,7 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str, orde
         return None
 
 
-# === FLASK WEBHOOK: ОБРАБОТКА ОПЛАТЫ ===
+# === FLASK WEBHOOK ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/lava-webhook", methods=["POST"])
@@ -175,7 +172,7 @@ def lava_webhook():
     except Exception:
         pass
         
-    # 2. УВЕДОМЛЕНИЕ ПОКУПАТЕЛЮ + ВОЗВРАТ КНОПОК МЕНЮ
+    # 2. УВЕДОМЛЕНИЕ ПОКУПАТЕЛЮ + ВОЗВРАТ МЕНЮ
     if order and order.get('buyer_id'):
         user_text = (
             "✅ <b>Оплата прошла успешно!</b>\n\n"
@@ -185,7 +182,6 @@ def lava_webhook():
             "Ожидайте, скоро мы выдадим ваш заказ!"
         )
         
-        # Чтобы вернуть меню, нужно передать клавиатуру в JSON
         main_menu_markup = {
             "keyboard": [
                 [{"text": "⭐️ Telegram Stars"}, {"text": "💎 Funds (TON)"}],
@@ -220,14 +216,13 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
         with open(image_path, 'rb') as photo_file:
             await update.message.reply_photo(photo=photo_file, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
     except FileNotFoundError:
-        # Если фото нет, шлем просто текст
         if parse_mode == "HTML":
             await update.message.reply_html(caption, reply_markup=reply_markup)
         else:
             await update.message.reply_text(caption, reply_markup=reply_markup)
 
 
-# === /start (ГЛАВНОЕ МЕНЮ) ===
+# === /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user.id)
@@ -248,7 +243,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_photo_message(update, IMG_MAIN_MENU, text, reply_markup)
 
 
-# === РАССЫЛКА (Команда /post) ===
+# === РАССЫЛКА (/post) ===
 async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_CHAT_ID):
         return
@@ -266,7 +261,6 @@ async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚀 Рассылка на {len(chat_ids)} пользователей...")
     
     count = 0
-    # Если ответили на фото - рассылаем фото
     if reply and reply.photo:
         photo_id = reply.photo[-1].file_id
         for chat_id in chat_ids:
@@ -277,7 +271,6 @@ async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
     else:
-        # Если просто текст
         if not caption_text:
             await update.message.reply_text("❗ Сделай Reply на фото с командой /post Текст\nИли просто /post Текст")
             return
@@ -293,7 +286,7 @@ async def broadcast_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Успешно отправлено: {count}")
 
 
-# === О сервисе и документы (ПОЛНЫЙ ТЕКСТ) ===
+# === О сервисе и документы ===
 async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
@@ -316,7 +309,7 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True)
     await update.message.reply_html(text, reply_markup=reply_markup)
 
-# === Stars (ВХОД В КАТЕГОРИЮ) ===
+# === Stars ===
 async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "stars"
@@ -327,7 +320,7 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_BUY_GIFT, stars_info, reply_markup, parse_mode="HTML")
 
-# === FUNDS / TON (ВХОД В КАТЕГОРИЮ) ===
+# === FUNDS / TON ===
 async def show_funds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "funds"
@@ -344,7 +337,7 @@ async def show_funds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_BUY_GIFT, funds_info, reply_markup, parse_mode="HTML")
 
-# === Подарок другу (ВВОД НИКА) ===
+# === Подарок другу ===
 async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["gift_mode"] = True
     gift_info = (
@@ -356,7 +349,7 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_html(gift_info, reply_markup=reply_markup)
 
-# === Соглашение (ПОЛНЫЙ ТЕКСТ) ===
+# === Соглашение ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_shown"] = True
 
@@ -376,7 +369,7 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_AGREEMENT, agreement_text, reply_markup)
 
-# === Согласие (ОБРАБОТКА) ===
+# === Согласие ===
 async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_accepted"] = True
     if "pending_order" in context.user_data:
@@ -459,8 +452,11 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
     )
     
-    # КНОПКИ ОТМЕНЫ НЕТ. ТОЛЬКО ОПЛАТА.
+    # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
+    
+    # Кнопка Отмены (Reply) - ВЕРНУЛ, КАК ТЫ ПРОСИЛ
+    await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
 # === Создание заказа TON ===
@@ -502,8 +498,11 @@ async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
     )
 
-    # КНОПКИ ОТМЕНЫ НЕТ. ТОЛЬКО ОПЛАТА.
+    # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
+    
+    # Кнопка Отмены (Reply) - ВЕРНУЛ, КАК ТЫ ПРОСИЛ
+    await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
 # === Поддержка ===
@@ -580,12 +579,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❗ Используйте меню или кнопки.")
 
-# === ГЛАВНАЯ ФУНКЦИЯ (ЗАПУСК) ===
+# === ГЛАВНАЯ ФУНКЦИЯ ===
 def main():
-    # Запускаем Flask (сервер для LAVA)
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # Запускаем бота
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -594,7 +591,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен! (Авто-уведомление + Funds + Без кнопки Отмена)")
+    print("🤖 Бот запущен (Полная версия с кнопкой Отмена)...")
     application.run_polling()
 
 if __name__ == "__main__":
