@@ -36,7 +36,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
 # === КУРС ВАЛЮТ ===
 STARS_PRICE = 1.6   # Цена за 1 звезду
-TON_PRICE = 650     # Цена за 1 TON
+TON_PRICE = 160     # Цена за 1 TON
 
 # === ПРОВЕРКА КЛЮЧЕЙ ===
 if not TOKEN or not LAVA_SECRET_KEY:
