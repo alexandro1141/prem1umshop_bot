@@ -36,7 +36,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
 # === КУРС ВАЛЮТ ===
 STARS_PRICE = 1.6   # Цена за 1 звезду
-TON_PRICE = 160     # Цена за 1 TON
+TON_PRICE = 160     # Цена за 1 TON (Telegram)
 
 # === ПРОВЕРКА КЛЮЧЕЙ ===
 if not TOKEN or not LAVA_SECRET_KEY:
@@ -161,7 +161,7 @@ def lava_webhook():
         if order['type'] == 'stars':
             admin_text += f"⭐ Stars: {order['amount']}\n💰 {order['price']} RUB"
         elif order['type'] == 'funds':
-            admin_text += f"💎 Funds (TON): {order['amount']} TON\n💰 {order['price']} RUB"
+            admin_text += f"💎 TON (Telegram): {order['amount']} TON\n💰 {order['price']} RUB"
             
     try:
         requests.post(
@@ -184,7 +184,7 @@ def lava_webhook():
         
         main_menu_markup = {
             "keyboard": [
-                [{"text": "⭐️ Telegram Stars"}, {"text": "💎 Funds (TON)"}],
+                [{"text": "⭐️ Telegram Stars"}, {"text": "💎 TON (Telegram)"}],
                 [{"text": "💬 Поддержка"}, {"text": "ℹ О сервисе"}]
             ],
             "resize_keyboard": True
@@ -229,14 +229,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     keyboard = [
-        ["⭐️ Telegram Stars", "💎 Funds (TON)"],
+        ["⭐️ Telegram Stars", "💎 TON (Telegram)"],
         ["💬 Поддержка", "ℹ О сервисе"],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     text = (
         f"🚀 <b>Добро пожаловать в PREM1UMSHOP!</b> {user.mention_html()}!\n\n"
-        "🎯 <b>Покупай Telegram Stars и Funds (TON) по лучшим ценам!</b>\n\n"
+        "🎯 <b>Покупай Telegram Stars и TON (Telegram) по лучшим ценам!</b>\n\n"
         "<b>Выбери категорию:</b>"
     )
     
@@ -291,7 +291,7 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ <b>О сервисе PREM1UMSHOP</b>\n\n"
         "PREM1UMSHOP (@prem1umshopbot) — сервис по продаже Telegram Stars "
-        "и Telegram Funds (TON).\n\n"
+        "и TON (Telegram).\n\n"
         "<b>Документы сервиса:</b>\n"
         "• Политика возврата денежных средств\n"
         "• Публичная оферта\n"
@@ -320,13 +320,13 @@ async def show_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await send_photo_message(update, IMG_BUY_GIFT, stars_info, reply_markup, parse_mode="HTML")
 
-# === FUNDS / TON ===
+# === TON (Telegram) ===
 async def show_funds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["category"] = "funds"
 
     funds_info = (
-        "💎 <b>Telegram Funds (TON)</b>\n\n"
+        "💎 <b>TON (Telegram)</b>\n\n"
         "⚠️ <b>ВАЖНО:</b> TON зачисляются на внутренний баланс Telegram.\n"
         "Они предназначены <b>только для покупки Telegram Подарков</b>.\n"
         "🚫 Это <b>НЕ</b> для кошелька @wallet, вывода или переводов.\n\n"
@@ -455,7 +455,7 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
     
-    # Кнопка Отмены (Reply) - ВЕРНУЛ, КАК ТЫ ПРОСИЛ
+    # Кнопка Отмены (Reply)
     await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
@@ -492,7 +492,7 @@ async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     msg = (
-        "💎 <b>Подтверждение заказа FUNDS</b>\n\n"
+        "💎 <b>Подтверждение заказа TON (Telegram)</b>\n\n"
         f"Товар: {count} TON\n"
         f"Цена: {price} ₽\n\n"
         "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
@@ -501,7 +501,7 @@ async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
     
-    # Кнопка Отмены (Reply) - ВЕРНУЛ, КАК ТЫ ПРОСИЛ
+    # Кнопка Отмены (Reply)
     await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
@@ -522,7 +522,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "⭐️ Telegram Stars": 
         await show_stars(update, context)
         return
-    elif text == "💎 Funds (TON)": 
+    elif text == "💎 TON (Telegram)": 
         await show_funds(update, context)
         return
     elif text == "💬 Поддержка": 
@@ -591,7 +591,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (Полная версия с кнопкой Отмена)...")
+    print("🤖 Бот запущен (Полная версия + Кнопка Отмена + TON)...")
     application.run_polling()
 
 if __name__ == "__main__":
