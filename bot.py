@@ -35,8 +35,8 @@ LAVA_WEBHOOK_SECRET = os.getenv("LAVA_WEBHOOK_SECRET")
 ADMIN_CHAT_ID = os.getenv("ADMIN_ID")
 
 # === КУРС ВАЛЮТ ===
-STARS_PRICE = 1.6   # Цена за 1 звезду
-TON_PRICE = 160     # Цена за 1 TON (Telegram)
+STARS_PRICE = 1.6
+TON_PRICE = 160
 
 # === ПРОВЕРКА КЛЮЧЕЙ ===
 if not TOKEN or not LAVA_SECRET_KEY:
@@ -46,23 +46,34 @@ if not TOKEN or not LAVA_SECRET_KEY:
 LAVA_INVOICE_URL = "https://api.lava.ru/business/invoice/create"
 LAVA_HOOK_URL = "http://95.181.224.199:8080/lava-webhook"
 
-# === ФАЙЛ С ПОЛЬЗОВАТЕЛЯМИ (БАЗА ДАННЫХ) ===
+# === ФАЙЛЫ ДАННЫХ ===
 USERS_FILE = "users.txt"
+STATUS_FILE = "status.txt"  # Файл для хранения режима (день/ночь)
 
+# === ФУНКЦИИ ===
 def save_user(chat_id):
     chat_id = str(chat_id)
     users = set()
-    
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, 'w').close()
-        
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
             users = set(f.read().splitlines())
-    
     if chat_id not in users:
         with open(USERS_FILE, "a") as f:
             f.write(chat_id + "\n")
+
+# Проверка: Спит админ или нет?
+def is_sleeping():
+    if not os.path.exists(STATUS_FILE):
+        return False
+    with open(STATUS_FILE, "r") as f:
+        return f.read().strip() == "SLEEP"
+
+# Установка статуса
+def set_status(mode):
+    with open(STATUS_FILE, "w") as f:
+        f.write(mode)
 
 # === НАСТРОЙКИ КАРТИНОК ===
 IMG_DIR = "images"
@@ -106,14 +117,11 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str, orde
 
     try:
         resp = requests.post(LAVA_INVOICE_URL, data=json_body.encode("utf-8"), headers=headers, timeout=15)
-        
         if resp.status_code != 200:
             logging.error("LAVA error %s: %s", resp.status_code, resp.text)
             return None
-            
         data = resp.json()
         invoice_data = data.get("data") or data.get("invoice") or data
-        
         pay_url = None
         if isinstance(invoice_data, dict):
             for key in ("url", "URL", "payUrl", "payment_url", "paymentUrl"):
@@ -121,7 +129,6 @@ def create_lava_invoice(amount_rub: int, description: str, return_url: str, orde
                     pay_url = invoice_data[key]
                     break
         return pay_url
-        
     except Exception as e:
         logging.exception("LAVA create_invoice exception: %s", e)
         return None
@@ -148,7 +155,7 @@ def lava_webhook():
 
     order = ORDERS.get(order_id)
     
-    # 1. УВЕДОМЛЕНИЕ АДМИНУ
+    # 1. АДМИНУ
     admin_text = f"💸 <b>ОПЛАТА LAVA</b>\nOrder: {order_id}\nStatus: {status}\n"
     if order:
         username = order.get("buyer_username")
@@ -172,15 +179,28 @@ def lava_webhook():
     except Exception:
         pass
         
-    # 2. УВЕДОМЛЕНИЕ ПОКУПАТЕЛЮ + ВОЗВРАТ МЕНЮ
+    # 2. ПОКУПАТЕЛЮ (С УЧЕТОМ РЕЖИМА СНА)
     if order and order.get('buyer_id'):
-        user_text = (
-            "✅ <b>Оплата прошла успешно!</b>\n\n"
-            "Спасибо за покупку в PREM1UMSHOP.\n"
-            "⏳ <b>Срок зачисления:</b> Обычно в течение <b>5 минут</b>.\n"
-            "<i>(В редких случаях зачисление может длиться до 1 часа).</i>\n\n"
-            "Ожидайте, скоро мы выдадим ваш заказ!"
-        )
+        
+        # ЕСЛИ СПИМ
+        if is_sleeping():
+            user_text = (
+                "✅ <b>Оплата прошла успешно!</b>\n\n"
+                "Спасибо за покупку в PREM1UMSHOP.\n\n"
+                "😴 <b>Внимание: Ночной режим</b>\n"
+                "Ваш заказ принят. Так как сейчас ночное время, средства поступят вам "
+                "<b>утром, примерно в 11:00 по МСК</b>.\n\n"
+                "Мы выдадим заказ в первую очередь, как проснемся!"
+            )
+        # ЕСЛИ НЕ СПИМ
+        else:
+            user_text = (
+                "✅ <b>Оплата прошла успешно!</b>\n\n"
+                "Спасибо за покупку в PREM1UMSHOP.\n"
+                "⏳ <b>Срок зачисления:</b> Обычно в течение <b>5 минут</b>.\n"
+                "<i>(В редких случаях зачисление может длиться до 1 часа).</i>\n\n"
+                "Ожидайте, скоро мы выдадим ваш заказ!"
+            )
         
         main_menu_markup = {
             "keyboard": [
@@ -241,6 +261,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await send_photo_message(update, IMG_MAIN_MENU, text, reply_markup)
+
+
+# === АДМИН-КОМАНДЫ (/sleep, /wake) ===
+async def sleep_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_CHAT_ID): return
+    set_status("SLEEP")
+    await update.message.reply_text("😴 <b>Ночной режим ВКЛЮЧЕН.</b>\nТеперь в чеках пишется предупреждение про 11:00 МСК.")
+
+async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_CHAT_ID): return
+    set_status("ACTIVE")
+    await update.message.reply_text("☀️ <b>Дневной режим ВКЛЮЧЕН.</b>\nРаботаем в штатном режиме.")
 
 
 # === РАССЫЛКА (/post) ===
@@ -417,7 +449,7 @@ async def show_funds_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     await send_photo_message(update, IMG_TON_AMOUNT, funds_text, reply_markup, parse_mode="HTML")
 
 
-# === Создание заказа Stars ===
+# === Создание заказа Stars (С ПРЕДУПРЕЖДЕНИЕМ) ===
 async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int, bypass_agreement=False):
     if not bypass_agreement and not context.user_data.get("agreement_accepted"):
         context.user_data["pending_order"] = {"type": "stars", "count": count}
@@ -445,21 +477,29 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ Ошибка создания счета.")
         return
 
-    msg = (
-        "🎉 Отличный выбор!\n\n"
-        f"Товар: {count} Telegram Stars ⭐️\n"
-        f"Цена: {price} ₽\n\n"
-        "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
-    )
+    # ФОРМИРУЕМ СООБЩЕНИЕ (ПРОВЕРЯЕМ, СПИТ ЛИ АДМИН)
+    if is_sleeping():
+        msg = (
+            "🎉 Отличный выбор!\n\n"
+            f"Товар: {count} Telegram Stars ⭐️\n"
+            f"Цена: {price} ₽\n\n"
+            "😴 <b>Внимание: Ночной режим</b>\n"
+            "Администратор сейчас отдыхает. Заказ будет выдан <b>утром, примерно в 11:00 по МСК</b>.\n\n"
+            "Можете смело оплачивать, ваш заказ будет первым в очереди!"
+        )
+    else:
+        msg = (
+            "🎉 Отличный выбор!\n\n"
+            f"Товар: {count} Telegram Stars ⭐️\n"
+            f"Цена: {price} ₽\n\n"
+            "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
+        )
     
-    # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
-    
-    # Кнопка Отмены (Reply)
     await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
-# === Создание заказа TON ===
+# === Создание заказа TON (С ПРЕДУПРЕЖДЕНИЕМ) ===
 async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int, bypass_agreement=False):
     if not (1 <= count <= 50):
         await update.message.reply_text("❌ Количество TON должно быть от 1 до 50.")
@@ -491,17 +531,25 @@ async def process_funds_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ Ошибка создания счета.")
         return
 
-    msg = (
-        "💎 <b>Подтверждение заказа TON (Telegram)</b>\n\n"
-        f"Товар: {count} TON\n"
-        f"Цена: {price} ₽\n\n"
-        "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
-    )
+    # ФОРМИРУЕМ СООБЩЕНИЕ (ПРОВЕРЯЕМ, СПИТ ЛИ АДМИН)
+    if is_sleeping():
+        msg = (
+            "💎 <b>Подтверждение заказа TON (Telegram)</b>\n\n"
+            f"Товар: {count} TON\n"
+            f"Цена: {price} ₽\n\n"
+            "😴 <b>Внимание: Ночной режим</b>\n"
+            "Администратор сейчас отдыхает. Заказ будет выдан <b>утром, примерно в 11:00 по МСК</b>.\n\n"
+            "Можете смело оплачивать, ваш заказ будет первым в очереди!"
+        )
+    else:
+        msg = (
+            "💎 <b>Подтверждение заказа TON (Telegram)</b>\n\n"
+            f"Товар: {count} TON\n"
+            f"Цена: {price} ₽\n\n"
+            "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
+        )
 
-    # Кнопка оплаты (Inline)
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
-    
-    # Кнопка Отмены (Reply)
     await update.message.reply_text("Если передумали:", reply_markup=ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True))
 
 
@@ -586,12 +634,16 @@ def main():
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("post", broadcast_post)) 
+    application.add_handler(CommandHandler("post", broadcast_post))
+    
+    # НОВЫЕ КОМАНДЫ СНА
+    application.add_handler(CommandHandler("sleep", sleep_command))
+    application.add_handler(CommandHandler("wake", wake_command))
     
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (Полная версия + Кнопка Отмена + TON)...")
+    print("🤖 Бот запущен (TON + Режим Сна + Предупреждение ДО оплаты)...")
     application.run_polling()
 
 if __name__ == "__main__":
