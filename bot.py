@@ -131,7 +131,7 @@ IMG_DIR = "images"
 IMG_MAIN_MENU = os.path.join(IMG_DIR, "ПлашкаБотПШ 1.png")
 IMG_BUY_GIFT = os.path.join(IMG_DIR, "ПлашкаБотПШ 2.png")
 IMG_STARS_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 3.png")
-IMG_AGREEMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 4.png")
+# IMG_AGREEMENT больше не нужен, мы его не используем
 IMG_PAYMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 5.png")
 IMG_TON_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 6.png")
 
@@ -240,7 +240,6 @@ def lava_webhook():
     # 2. УВЕДОМЛЕНИЕ ПОКУПАТЕЛЮ
     if order and order.get('buyer_id'):
         
-        # ПРОВЕРКА РЕЖИМА СНА
         if is_sleeping():
             user_text = (
                 "✅ <b>Оплата прошла успешно!</b>\n\n"
@@ -289,7 +288,6 @@ def run_flask():
 # === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (ЗАЩИТА ОТ ОШИБОК) ===
 async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
     try:
-        # 1. Если картинка в кэше — пробуем отправить
         if image_path in PHOTO_CACHE:
             try:
                 await update.message.reply_photo(
@@ -300,9 +298,8 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
                 )
                 return
             except Exception:
-                del PHOTO_CACHE[image_path] # Если ID протух, удаляем
+                del PHOTO_CACHE[image_path]
 
-        # 2. Если нет — пробуем загрузить файл
         with open(image_path, 'rb') as photo_file:
             message = await update.message.reply_photo(
                 photo=photo_file, 
@@ -314,8 +311,7 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
                 PHOTO_CACHE[image_path] = message.photo[-1].file_id
 
     except Exception as e:
-        # 3. ЕСЛИ ОШИБКА (Timeout, файл большой) — ШЛЕМ ПРОСТО ТЕКСТ!
-        # Клиент увидит меню и кнопки, продажа не сорвется.
+        # Если ошибка (Timeout и т.д.) - шлем текст
         logging.error(f"Ошибка фото: {e}") 
         if parse_mode == "HTML":
             await update.message.reply_html(caption, reply_markup=reply_markup)
@@ -327,7 +323,7 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user.id)
-    record_activity(user.id) # Статистика
+    record_activity(user.id)
     context.user_data.clear()
 
     keyboard = [
@@ -487,7 +483,7 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_html(gift_info, reply_markup=reply_markup)
 
-# === Соглашение ===
+# === Соглашение (ТЕПЕРЬ БЕЗ ФОТО) ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_shown"] = True
 
@@ -505,12 +501,13 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["✅ Я согласен"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    await send_photo_message(update, IMG_AGREEMENT, agreement_text, reply_markup)
+    # ИСПОЛЬЗУЕМ REPLY_HTML ВМЕСТО ФОТО
+    await update.message.reply_html(agreement_text, reply_markup=reply_markup)
 
 # === Согласие ===
 async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    record_activity(user.id) # Статистика
+    record_activity(user.id)
     
     context.user_data["agreement_accepted"] = True
     if "pending_order" in context.user_data:
@@ -722,7 +719,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     star_pkgs = {"100 ⭐️ - 160Р": 100, "150 ⭐️ - 240Р": 150, "250 ⭐️ - 400Р": 250, "500 ⭐️ - 800Р": 500, "1000 ⭐️ - 1600Р": 1000, "2500 ⭐️ - 4000Р": 2500}
     if text in star_pkgs: 
         await process_stars_order(update, context, star_pkgs[text])
-        return # ВОТ ЗДЕСЬ ИСПРАВЛЕНА ОШИБКА "ИСПОЛЬЗУЙТЕ МЕНЮ"
+        return 
         
     try:
         count = int(text)
@@ -756,7 +753,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (ЗАЩИТА ОТ TIMEOUT + ИСПРАВЛЕННОЕ МЕНЮ)...")
+    print("🤖 Бот запущен (ВСЕ ФУНКЦИИ + РАЗВЕРНУТЫЙ КОД)...")
     application.run_polling()
 
 if __name__ == "__main__":
