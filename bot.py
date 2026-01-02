@@ -582,7 +582,7 @@ async def process_stars_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             "🎉 Отличный выбор!\n\n"
             f"Товар: {count} Telegram Stars ⭐️\n"
             f"Цена: {price} ₽\n\n"
-            "ℹ️ <b>Инфо:</b> Как только оплата пройдет, бот пришлёт вам уведомление."
+            "ℹ️ <b>Инфо:</b> После оплаты подождите 2-3 минуты, бот пришлёт вам уведомление."
         )
     
     await send_photo_message(update, IMG_PAYMENT, msg, InlineKeyboardMarkup([[InlineKeyboardButton("💳 ОПЛАТИТЬ", url=url)]]))
