@@ -150,6 +150,9 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
+# === ПЕРЕМЕННАЯ ДЛЯ ЗАПОМИНАНИЯ ID КАРТИНОК (КЭШ) ===
+PHOTO_CACHE = {} 
+
 # === Память заказов ===
 ORDERS: dict[str, dict] = {}
 
@@ -292,11 +295,32 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=8080)
 
 
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО ===
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (С КЭШИРОВАНИЕМ) ===
 async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
     try:
-        with open(image_path, 'rb') as photo_file:
-            await update.message.reply_photo(photo=photo_file, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        # 1. Проверяем, есть ли ID этой картинки в памяти
+        if image_path in PHOTO_CACHE:
+            # Если есть - отправляем по ID (МГНОВЕННО)
+            await update.message.reply_photo(
+                photo=PHOTO_CACHE[image_path], 
+                caption=caption, 
+                parse_mode=parse_mode, 
+                reply_markup=reply_markup
+            )
+        else:
+            # 2. Если нет - загружаем файл с диска
+            with open(image_path, 'rb') as photo_file:
+                message = await update.message.reply_photo(
+                    photo=photo_file, 
+                    caption=caption, 
+                    parse_mode=parse_mode, 
+                    reply_markup=reply_markup
+                )
+                # 3. Запоминаем ID картинки
+                if message.photo:
+                    file_id = message.photo[-1].file_id
+                    PHOTO_CACHE[image_path] = file_id
+                    
     except FileNotFoundError:
         if parse_mode == "HTML":
             await update.message.reply_html(caption, reply_markup=reply_markup)
