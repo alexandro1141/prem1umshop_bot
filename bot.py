@@ -295,37 +295,44 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=8080)
 
 
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (С КЭШИРОВАНИЕМ) ===
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (БРОНЕБОЙНАЯ) ===
 async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
     try:
-        # 1. Проверяем, есть ли ID этой картинки в памяти
+        # Попытка 1: Если картинка есть в памяти — пробуем отправить мгновенно
         if image_path in PHOTO_CACHE:
-            # Если есть - отправляем по ID (МГНОВЕННО)
-            await update.message.reply_photo(
-                photo=PHOTO_CACHE[image_path], 
-                caption=caption, 
-                parse_mode=parse_mode, 
-                reply_markup=reply_markup
-            )
-        else:
-            # 2. Если нет - загружаем файл с диска
-            with open(image_path, 'rb') as photo_file:
-                message = await update.message.reply_photo(
-                    photo=photo_file, 
+            try:
+                await update.message.reply_photo(
+                    photo=PHOTO_CACHE[image_path], 
                     caption=caption, 
                     parse_mode=parse_mode, 
                     reply_markup=reply_markup
                 )
-                # 3. Запоминаем ID картинки
-                if message.photo:
-                    file_id = message.photo[-1].file_id
-                    PHOTO_CACHE[image_path] = file_id
+                return # Успех — выходим
+            except Exception:
+                # Если ID устарел — удаляем из памяти и идем дальше
+                del PHOTO_CACHE[image_path]
+
+        # Попытка 2: Загружаем файл с диска
+        with open(image_path, 'rb') as photo_file:
+            message = await update.message.reply_photo(
+                photo=photo_file, 
+                caption=caption, 
+                parse_mode=parse_mode, 
+                reply_markup=reply_markup
+            )
+            # Запоминаем новый ID
+            if message.photo:
+                PHOTO_CACHE[image_path] = message.photo[-1].file_id
                     
     except FileNotFoundError:
+        # Если файла нет — шлем текст
         if parse_mode == "HTML":
             await update.message.reply_html(caption, reply_markup=reply_markup)
         else:
             await update.message.reply_text(caption, reply_markup=reply_markup)
+    except Exception as e:
+        # Ловим любые другие ошибки
+        await update.message.reply_text(f"⚠️ Ошибка фото: {e}")
 
 
 # === /start ===
@@ -727,7 +734,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     star_pkgs = {"100 ⭐️ - 160Р": 100, "150 ⭐️ - 240Р": 150, "250 ⭐️ - 400Р": 250, "500 ⭐️ - 800Р": 500, "1000 ⭐️ - 1600Р": 1000, "2500 ⭐️ - 4000Р": 2500}
     if text in star_pkgs: 
         await process_stars_order(update, context, star_pkgs[text])
-        return
+        return # <--- ЭТОТ RETURN ТЕПЕРЬ ТУТ ЕСТЬ!
         
     try:
         count = int(text)
@@ -761,7 +768,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (ВСЕ ФУНКЦИИ + РАЗВЕРНУТЫЙ КОД)...")
+    print("🤖 Бот запущен (ИСПРАВЛЕН БАГ МЕНЮ + ФОТО)...")
     application.run_polling()
 
 if __name__ == "__main__":
