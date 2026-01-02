@@ -52,6 +52,9 @@ USERS_FILE = "users.txt"       # Для рассылки
 STATS_FILE = "stats.json"      # Для статистики
 STATUS_FILE = "status.txt"     # Режим сна
 
+# === ПЕРЕМЕННАЯ ДЛЯ КЭША КАРТИНОК ===
+PHOTO_CACHE = {} 
+
 # === ФУНКЦИИ РАБОТЫ С ФАЙЛАМИ ===
 
 # 1. Сохранение юзера для рассылки
@@ -80,11 +83,15 @@ def record_activity(user_id):
         except json.JSONDecodeError:
             data = {}
 
+    # Если сегодняшней даты нет - создаем
     if today not in data:
         data[today] = []
 
+    # Если юзера нет в списке за сегодня - добавляем
     if user_id not in data[today]:
         data[today].append(user_id)
+        
+        # Сохраняем обратно в файл
         with open(STATS_FILE, "w") as f:
             json.dump(data, f)
 
@@ -92,6 +99,7 @@ def record_activity(user_id):
 def get_stats():
     if not os.path.exists(STATS_FILE):
         return 0, 0, 0
+    
     try:
         with open(STATS_FILE, "r") as f:
             data = json.load(f)
@@ -99,14 +107,18 @@ def get_stats():
         return 0, 0, 0
 
     today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    # За сегодня
     users_today = len(data.get(today_str, []))
 
+    # За 7 дней
     users_week_set = set()
     for i in range(7):
         date_check = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
         if date_check in data:
             users_week_set.update(data[date_check])
     
+    # За 30 дней
     users_month_set = set()
     for i in range(30):
         date_check = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
@@ -131,7 +143,7 @@ IMG_DIR = "images"
 IMG_MAIN_MENU = os.path.join(IMG_DIR, "ПлашкаБотПШ 1.png")
 IMG_BUY_GIFT = os.path.join(IMG_DIR, "ПлашкаБотПШ 2.png")
 IMG_STARS_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 3.png")
-# IMG_AGREEMENT больше не нужен, мы его не используем
+# IMG_AGREEMENT убрали, так как теперь там текст
 IMG_PAYMENT = os.path.join(IMG_DIR, "ПлашкаБотПШ 5.png")
 IMG_TON_AMOUNT = os.path.join(IMG_DIR, "ПлашкаБотПШ 6.png")
 
@@ -140,9 +152,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-
-# === ПЕРЕМЕННАЯ ДЛЯ ЗАПОМИНАНИЯ ID КАРТИНОК (КЭШ) ===
-PHOTO_CACHE = {} 
 
 # === Память заказов ===
 ORDERS: dict[str, dict] = {}
@@ -240,6 +249,7 @@ def lava_webhook():
     # 2. УВЕДОМЛЕНИЕ ПОКУПАТЕЛЮ
     if order and order.get('buyer_id'):
         
+        # ПРОВЕРКА РЕЖИМА СНА
         if is_sleeping():
             user_text = (
                 "✅ <b>Оплата прошла успешно!</b>\n\n"
@@ -285,9 +295,10 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=8080)
 
 
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (ЗАЩИТА ОТ ОШИБОК) ===
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ФОТО (НЕУБИВАЕМАЯ) ===
 async def send_photo_message(update: Update, image_path: str, caption: str, reply_markup, parse_mode="HTML"):
     try:
+        # 1. Если картинка в кэше — пробуем мгновенно
         if image_path in PHOTO_CACHE:
             try:
                 await update.message.reply_photo(
@@ -300,6 +311,7 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
             except Exception:
                 del PHOTO_CACHE[image_path]
 
+        # 2. Если нет — пробуем загрузить файл
         with open(image_path, 'rb') as photo_file:
             message = await update.message.reply_photo(
                 photo=photo_file, 
@@ -311,8 +323,9 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
                 PHOTO_CACHE[image_path] = message.photo[-1].file_id
 
     except Exception as e:
-        # Если ошибка (Timeout и т.д.) - шлем текст
+        # 3. ЕСЛИ ОШИБКА (Timeout, файл большой и т.д.) — ШЛЕМ ПРОСТО ТЕКСТ!
         logging.error(f"Ошибка фото: {e}") 
+        
         if parse_mode == "HTML":
             await update.message.reply_html(caption, reply_markup=reply_markup)
         else:
@@ -323,7 +336,7 @@ async def send_photo_message(update: Update, image_path: str, caption: str, repl
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user.id)
-    record_activity(user.id)
+    record_activity(user.id) # Статистика
     context.user_data.clear()
 
     keyboard = [
@@ -483,7 +496,7 @@ async def handle_gift_selection(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_html(gift_info, reply_markup=reply_markup)
 
-# === Соглашение (ТЕПЕРЬ БЕЗ ФОТО) ===
+# === Соглашение (ТЕПЕРЬ ТОЧНО ТЕКСТОМ) ===
 async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["agreement_shown"] = True
 
@@ -501,13 +514,13 @@ async def show_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["✅ Я согласен"], ["🔙 Назад"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    # ИСПОЛЬЗУЕМ REPLY_HTML ВМЕСТО ФОТО
+    # ВОТ ЗДЕСЬ ТЕПЕРЬ ОБЫЧНЫЙ ТЕКСТ (без картинки)
     await update.message.reply_html(agreement_text, reply_markup=reply_markup)
 
 # === Согласие ===
 async def handle_agreement_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    record_activity(user.id)
+    record_activity(user.id) # Статистика
     
     context.user_data["agreement_accepted"] = True
     if "pending_order" in context.user_data:
@@ -753,7 +766,7 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^✅ Я согласен$"), handle_agreement_consent))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Бот запущен (ВСЕ ФУНКЦИИ + РАЗВЕРНУТЫЙ КОД)...")
+    print("🤖 Бот запущен (ВСЕ РАБОТАЕТ, СОГЛАШЕНИЕ ТЕКСТОМ)...")
     application.run_polling()
 
 if __name__ == "__main__":
